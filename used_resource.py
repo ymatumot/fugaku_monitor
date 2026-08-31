@@ -2,28 +2,36 @@ import pandas as pd
 import subprocess
 import datetime
 import os
+import csv
+import numpy as np
 import matplotlib
 matplotlib.use('Agg')
+matplotlib.rcParams['font.family'] = ['DejaVu Sans', 'Droid Sans Japanese']
 import matplotlib.pyplot as plt
 import dropbox
 
 today = datetime.date.today()
-#term_start = '20250401'
-term_start = '20251001'
-#term_end = '20230930'
-term_end = today.strftime('%Y%m%d')
-term = term_start+':'+term_end
 
-#uids = ['<uid9>','<uid1>','<uid2>','<uid11>','<uid10>','<uid3>','<uid4>','<uid7>','<uid8>','<uid5>']
-#gids = ['<gid1>','<gid2>']
-#names = ['<user1>','Matsumoto','<user2>','<user3>','<user10>','<user4>','<user5>','<user6>','<user7>','<user8>']
-uids = ['<uid1>','<uid2>','<uid3>','<uid4>','<uid5>','<uid6>']
+uids = ['<uid1>','<uid2>']
 gids = ['hp240019']
-names = ['Matsumoto','<user2>','<user4>','<user5>','<user8>','<user9>']
+names = ['Matsumoto','<user2>']
 users = dict(zip(uids,names))
 
 #labels = ['ELAPSE_TIM','NRNUM']
 labels = ['ELAPSE_TIM','NANUM']
+
+# fiscal-year periods: zenki (前期) = Apr-Sep, kouki (後期) = Oct-Mar
+fiscal_year = today.year if today.month >= 4 else today.year - 1
+zenki_start = datetime.date(fiscal_year, 4, 1)
+zenki_end = datetime.date(fiscal_year, 9, 30)
+kouki_start = datetime.date(fiscal_year, 10, 1)
+kouki_end = datetime.date(fiscal_year + 1, 3, 31)
+
+periods = [
+    ('zenki', '前期', zenki_start, zenki_end),
+    ('kouki', '後期', kouki_start, kouki_end),
+    ('zenkikan', '全期間', zenki_start, kouki_end),
+]
 
 dropbox_folder = '/FugakuMonitor'
 image_path = os.path.join(
@@ -47,39 +55,75 @@ def upload_to_dropbox(local_path, folder):
     print('uploaded to Dropbox: '+dest_path)
 
 
-fig, axes = plt.subplots(1, len(gids), figsize=(6*len(gids), 5), squeeze=False)
-axes = axes[0]
+def node_hours(gid, uid, start, end):
+    if start > today:
+        return 0.0
+    term = start.strftime('%Y%m%d')+':'+min(end, today).strftime('%Y%m%d')
+    get_csv = 'pjstatj -s -u '+uid+' -g '+gid+' -t '+term+' -c > '+'output.csv'
+    subprocess.call(get_csv,shell=True)
+
+    df = pd.read_csv('output.csv')
+    df = df[labels].dropna()
+    subprocess.call('rm output.csv',shell=True)
+
+    etime_h = df[labels[0]].astype(str).str[0:4].astype(float)
+    etime_m = df[labels[0]].astype(str).str[5:7].astype(float)
+    etime_s = df[labels[0]].astype(str).str[8:10].astype(float)
+    etime = etime_h+etime_m/60.0+etime_s/3600.0
+    node = df[labels[1]]
+    return (etime*node).sum()
+
+
+def get_period_allocations(gid):
+    output = subprocess.check_output(['accountj','-g',gid,'-r','1','-c'], text=True)
+    allocations = {}
+    for row in csv.reader(output.splitlines()):
+        if row and row[0] == 'SUBTHEMEPERIOD':
+            limit_sec = float(row[3])
+            if row[2] == '1':
+                allocations['zenki'] = limit_sec/3600.0
+            elif row[2] == '2':
+                allocations['kouki'] = limit_sec/3600.0
+    allocations.setdefault('zenki', 0.0)
+    allocations.setdefault('kouki', 0.0)
+    allocations['zenkikan'] = allocations['zenki']+allocations['kouki']
+    return allocations
+
+
+fig, axes = plt.subplots(len(gids), 1, figsize=(8, 5*len(gids)), squeeze=False)
+axes = axes[:,0]
+
+x = np.arange(len(periods))
+width = 0.8/len(uids)
 
 for gid, ax in zip(gids, axes):
-  node_hour = list()
-  used_names = list()
+  allocations = get_period_allocations(gid)
+  results = dict()
   for uid in uids:
+     for key, label, start, end in periods:
+        nh = node_hours(gid, uid, start, end)
+        results[(uid,key)] = nh
+        print(gid+' '+label+' '+users[uid]+': ',nh,' (node*hour)')
 
-     get_csv = 'pjstatj -s -u '+uid+' -g '+gid+' -t '+term+' -c > '+'output.csv'
-     subprocess.call(get_csv,shell=True)
+  for i, uid in enumerate(uids):
+     values = [results[(uid,key)] for key,label,start,end in periods]
+     offset = (i-(len(uids)-1)/2)*width
+     ax.bar(x+offset, values, width, label=users[uid])
 
-     df = pd.read_csv('output.csv')
-     df = df[labels].dropna()
+  for p, (key, label, start, end) in enumerate(periods):
+     total = sum(results[(uid,key)] for uid in uids)
+     print(gid+' '+label+' total: ',total,' (node*hour)')
+     allocation = allocations[key]
+     if allocation > 0:
+        ax.hlines(allocation, x[p]-0.4, x[p]+0.4, colors='red', linestyles='--')
 
-     etime_h = df[labels[0]].astype(str).str[0:4].astype(float)
-     etime_m = df[labels[0]].astype(str).str[5:7].astype(float)
-     etime_s = df[labels[0]].astype(str).str[8:10].astype(float)
-     etime = etime_h+etime_m/60.0+etime_s/3600.0
-     node = df[labels[1]]
-     node_hour.append((etime*node).sum())
-     used_names.append(users[uid])
-     print(users[uid]+': ',(etime*node).sum(),' (node*hour)')
-
-  subprocess.call('rm output.csv',shell=True)
-  total = sum(node_hour)
-  print('total used recources of '+gid+' as of '+today.strftime('%y/%m/%d')+': ',total,' (node*hour)')
-
-  ax.bar(used_names, node_hour)
-  ax.set_title(gid+'  total: {:.1f} node*hour'.format(total))
+  ax.set_xticks(x)
+  ax.set_xticklabels([label for key,label,start,end in periods])
   ax.set_ylabel('node*hour')
-  ax.tick_params(axis='x', rotation=45)
+  ax.set_title(gid)
+  ax.legend()
 
-fig.suptitle('Fugaku resource usage as of '+today.strftime('%Y-%m-%d')+' (since '+term_start+')')
+fig.suptitle('Fugaku resource usage as of '+today.strftime('%Y-%m-%d')+' (red dashed line: allocation)')
 fig.tight_layout()
 fig.savefig(image_path)
 plt.close(fig)
