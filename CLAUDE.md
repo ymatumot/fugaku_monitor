@@ -4,12 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This directory contains a single script, `used_resource.py`, for tracking compute
-resource usage (node-hours) on the Fugaku supercomputer (Fujitsu FX1000/PJM
-environment). It shells out to `pjstatj` (Fujitsu's job accounting CLI) to pull
-per-user job statistics for a group ID (`gid`) and computes node-hours consumed
-per user, broken down by fiscal-year period (前期/後期/全期間), against the
-group's allocated quota.
+This directory contains two scripts:
+
+- `used_resource.py`: tracks compute resource usage (node-hours) on the Fugaku
+  supercomputer (Fujitsu FX1000/PJM environment). It shells out to `pjstatj`
+  (Fujitsu's job accounting CLI) to pull per-user job statistics for a group ID
+  (`gid`) and computes node-hours consumed per user, broken down by fiscal-year
+  period (前期/後期/全期間), against the group's allocated quota.
+- `get_dropbox_refresh_token.py`: a one-off interactive helper to (re-)obtain a
+  Dropbox OAuth2 refresh token when `used_resource.py`'s Dropbox upload starts
+  failing with an auth error (see "Dropbox upload credentials" below).
 
 After computing node-hours, the script renders a grouped bar chart — one group
 of bars per period, one bar per user within each group, with a red dashed line
@@ -50,8 +54,34 @@ configured (crontab `VAR=value` lines, or a sourced env file):
 - `DROPBOX_REFRESH_TOKEN`
 
 These come from a Dropbox app created in the Dropbox App Console (scoped app,
-`files.content.write` permission) and an OAuth2 refresh-token flow run once to
-obtain `DROPBOX_REFRESH_TOKEN`. Do not hardcode these values in the script.
+Full Dropbox access, `files.content.write` permission) and an OAuth2
+refresh-token flow run once to obtain `DROPBOX_REFRESH_TOKEN`. Do not hardcode
+these values in the script.
+
+On this system the three variables live in `~/.config/fugaku_monitor.env`
+(`chmod 600`, `export VAR=value` lines) and cron sources that file before
+running the script:
+
+```cron
+0 6 * * * . $HOME/.config/fugaku_monitor.env && /home/<uid1>/miniconda3/bin/python3 /vol0006/mdt3/home/<uid1>/scripts/used_resource.py >> /vol0006/mdt3/home/<uid1>/scripts/cron.log 2>&1
+```
+
+A refresh token normally never expires on its own — it stops working only if
+the app's Dropbox connection is revoked (Dropbox account settings > Connected
+apps), the app is deleted, or its App secret is regenerated in the App
+Console. When that happens, the cron job's graph generation still succeeds
+(the PNG is written next to the script) but the upload step raises a
+`dropbox.exceptions.AuthError`, visible in `cron.log`. To recover, get a new
+authorization code (App key/secret are unaffected and can be reused) —
+
+```
+https://www.dropbox.com/oauth2/authorize?client_id=<APP_KEY>&response_type=code&token_access_type=offline
+```
+
+— then run `get_dropbox_refresh_token.py` (prompts for App key, App secret,
+and the authorization code via `getpass`, so none of them get echoed or
+logged) and copy its printed `refresh_token` into
+`~/.config/fugaku_monitor.env`.
 
 ## How it works
 
