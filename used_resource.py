@@ -33,7 +33,7 @@ periods = [
     ('zenkikan', '全期間', zenki_start, kouki_end),
 ]
 
-dropbox_folder = '/FugakuMonitor'
+dropbox_folder = ''  # app-folder access: uploads go to the app's own dedicated Dropbox folder
 image_path = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     'resource_usage_'+today.strftime('%Y%m%d')+'.png',

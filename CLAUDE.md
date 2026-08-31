@@ -18,8 +18,8 @@ This directory contains two scripts:
 After computing node-hours, the script renders a grouped bar chart — one group
 of bars per period, one bar per user within each group, with a red dashed line
 marking that period's allocation — to `resource_usage_<YYYYMMDD>.png` next to
-the script, and uploads that PNG to the Dropbox folder `/FugakuMonitor` via the
-Dropbox API.
+the script, and uploads that PNG to the Dropbox app's own dedicated folder via
+the Dropbox API.
 
 ## Running the script
 
@@ -54,9 +54,17 @@ configured (crontab `VAR=value` lines, or a sourced env file):
 - `DROPBOX_REFRESH_TOKEN`
 
 These come from a Dropbox app created in the Dropbox App Console (scoped app,
-Full Dropbox access, `files.content.write` permission) and an OAuth2
+**App folder** access, `files.content.write` permission) and an OAuth2
 refresh-token flow run once to obtain `DROPBOX_REFRESH_TOKEN`. Do not hardcode
 these values in the script.
+
+Because the app uses App folder access (not Full Dropbox), all API paths are
+relative to the app's own dedicated folder in the connected Dropbox account —
+`dropbox_folder = ''` in `used_resource.py` means "the app folder's root", not
+the Dropbox root. If the access type is ever changed back to Full Dropbox (or
+to a different app folder name), the existing refresh token becomes invalid
+for the new scope and must be reobtained (see the recovery procedure below) —
+changing access type always requires re-authorizing.
 
 On this system the three variables live in `~/.config/fugaku_monitor.env`
 (`chmod 600`, `export VAR=value` lines) and cron sources that file before
