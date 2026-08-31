@@ -12,9 +12,62 @@ import dropbox
 
 today = datetime.date.today()
 
-uids = ['<uid1>','<uid2>']
-gids = ['hp240019']
-names = ['Matsumoto','<user2>']
+#labels = ['ELAPSE_TIM','NRNUM']
+labels = ['ELAPSE_TIM','NANUM']
+
+dropbox_folder = ''  # app-folder access: uploads go to the app's own dedicated Dropbox folder
+accounts_cache_path = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'accounts_cache.csv',
+)
+image_path = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'resource_usage_'+today.strftime('%Y%m%d')+'.png',
+)
+
+
+def get_dropbox_client():
+    return dropbox.Dropbox(
+        oauth2_refresh_token=os.environ['DROPBOX_REFRESH_TOKEN'],
+        app_key=os.environ['DROPBOX_APP_KEY'],
+        app_secret=os.environ['DROPBOX_APP_SECRET'],
+    )
+
+
+def load_accounts(dbx, folder, cache_path):
+    # accounts.csv rows: uid,name,gid -- one row per tracked user. Downloaded
+    # fresh from Dropbox every run so accounts can be added/removed without
+    # touching the script; falls back to the last successfully downloaded
+    # copy (cached next to the script) if Dropbox is unreachable.
+    remote_path = folder+'/accounts.csv'
+    try:
+        _, res = dbx.files_download(remote_path)
+        with open(cache_path, 'wb') as f:
+            f.write(res.content)
+        print('downloaded accounts.csv from Dropbox: '+remote_path)
+    except Exception as e:
+        if not os.path.exists(cache_path):
+            raise RuntimeError(
+                'failed to download '+remote_path+' and no local cache at '+cache_path
+            ) from e
+        print('WARNING: failed to download '+remote_path+' ('+str(e)+'), using local cache: '+cache_path)
+
+    uids, names, gids = [], [], []
+    uid_gid = {}
+    with open(cache_path, newline='') as f:
+        for row in csv.reader(f):
+            if not row:
+                continue
+            uid, name, gid = row[0].strip(), row[1].strip(), row[2].strip()
+            uids.append(uid)
+            names.append(name)
+            uid_gid[uid] = gid
+            if gid not in gids:
+                gids.append(gid)
+    return uids, names, gids, uid_gid
+
+
+dbx = get_dropbox_client()
+uids, names, gids, uid_gid = load_accounts(dbx, dropbox_folder, accounts_cache_path)
 users = dict(zip(uids,names))
 
 # fixed slice colors: each tracked user + その他 get the ggplot cycle colors,
@@ -22,9 +75,6 @@ users = dict(zip(uids,names))
 _cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
 color_map = {name: _cycle[i % len(_cycle)] for i, name in enumerate(names+['その他'])}
 color_map['未使用'] = 'gray'
-
-#labels = ['ELAPSE_TIM','NRNUM']
-labels = ['ELAPSE_TIM','NANUM']
 
 # fiscal-year periods: zenki (前期) = Apr-Sep, kouki (後期) = Oct-Mar
 fiscal_year = today.year if today.month >= 4 else today.year - 1
@@ -39,22 +89,7 @@ periods = [
     ('zenkikan', '全期間', zenki_start, kouki_end),
 ]
 
-dropbox_folder = ''  # app-folder access: uploads go to the app's own dedicated Dropbox folder
-image_path = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    'resource_usage_'+today.strftime('%Y%m%d')+'.png',
-)
-
-
-def upload_to_dropbox(local_path, folder):
-    app_key = os.environ['DROPBOX_APP_KEY']
-    app_secret = os.environ['DROPBOX_APP_SECRET']
-    refresh_token = os.environ['DROPBOX_REFRESH_TOKEN']
-    dbx = dropbox.Dropbox(
-        oauth2_refresh_token=refresh_token,
-        app_key=app_key,
-        app_secret=app_secret,
-    )
+def upload_to_dropbox(dbx, local_path, folder):
     dest_path = folder+'/'+os.path.basename(local_path)
     with open(local_path, 'rb') as f:
         dbx.files_upload(f.read(), dest_path, mode=dropbox.files.WriteMode.overwrite)
@@ -154,6 +189,7 @@ def pie_or_placeholder(ax, values, pie_labels, title):
 
 
 for gid in gids:
+  group_uids = [uid for uid in uids if uid_gid[uid] == gid]
   period_stats = get_period_stats(gid)
   ytd_usage = get_group_user_node_hours(gid)
   if today < kouki_start:
@@ -162,7 +198,7 @@ for gid in gids:
      zenki_usage = group_node_hours_pjstatj(gid, zenki_start, zenki_end)
 
   node_hour_results = dict()
-  for uid in uids:
+  for uid in group_uids:
      ytd = ytd_usage.get(uid, 0.0)
      zenki = zenki_usage.get(uid, 0.0)
      kouki = 0.0 if today < kouki_start else max(ytd-zenki, 0.0)
@@ -179,7 +215,7 @@ for gid in gids:
   fig, axes = plt.subplots(2, max(len(periods),len(volumes)), figsize=(6*max(len(periods),len(volumes)), 10))
 
   for p, (key, label, start, end) in enumerate(periods):
-     values = [node_hour_results[(uid,key)] for uid in uids]
+     values = [node_hour_results[(uid,key)] for uid in group_uids]
      tracked_total = sum(values)
      group_usage = period_stats[key]['usage']
      others = max(group_usage-tracked_total, 0.0)
@@ -187,20 +223,20 @@ for gid in gids:
      limit = period_stats[key]['limit']
      unused = max(limit-group_usage, 0.0)
      title = label+'\n使用 {:,.0f} / 割当 {:,.0f} node*hour'.format(group_usage, limit)
-     pie_or_placeholder(axes[0][p], values+[others,unused], [users[uid] for uid in uids]+['その他','未使用'], title)
+     pie_or_placeholder(axes[0][p], values+[others,unused], [users[uid] for uid in group_uids]+['その他','未使用'], title)
 
   for p in range(len(periods), axes.shape[1]):
      axes[0][p].axis('off')
 
   for v, volume in enumerate(volumes):
-     values = [user_disk.get((volume,uid),0.0) for uid in uids]
+     values = [user_disk.get((volume,uid),0.0) for uid in group_uids]
      tracked_total = sum(values)
      vol_usage = volumes_info[volume]['usage']
      others = max(vol_usage-tracked_total, 0.0)
      limit = volumes_info[volume]['limit']
      unused = max(limit-vol_usage, 0.0)
      title = volume+'\n使用 {:,.0f} / 割当 {:,.0f} GiB'.format(vol_usage, limit)
-     pie_or_placeholder(axes[1][v], values+[others,unused], [users[uid] for uid in uids]+['その他','未使用'], title)
+     pie_or_placeholder(axes[1][v], values+[others,unused], [users[uid] for uid in group_uids]+['その他','未使用'], title)
 
   for v in range(len(volumes), axes.shape[1]):
      axes[1][v].axis('off')
@@ -211,4 +247,4 @@ for gid in gids:
   plt.close(fig)
   print('saved graph: '+image_path)
 
-upload_to_dropbox(image_path, dropbox_folder)
+upload_to_dropbox(dbx, image_path, dropbox_folder)

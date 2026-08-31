@@ -31,8 +31,9 @@ the Dropbox API.
 python3 used_resource.py
 ```
 
-No arguments — user IDs, group IDs, and names are hardcoded at the top of the
-file. Requires `pandas`, `matplotlib`, `dropbox` (`pip install dropbox`) and
+No arguments — tracked user IDs, names, and group IDs come from `accounts.csv`
+in the Dropbox app folder, downloaded fresh on every run (see "Accounts file"
+below). Requires `pandas`, `matplotlib`, `dropbox` (`pip install dropbox`) and
 working `pjstatj`/`accountj`/`accountd` on PATH (all present at
 `/usr/local/bin/` on this system).
 
@@ -45,6 +46,36 @@ sets `matplotlib.rcParams['font.family'] = ['DejaVu Sans', 'Droid Sans Japanese'
 glyphs) — `Droid Sans Japanese` ships at
 `/usr/share/fonts/google-droid/DroidSansJapanese.ttf` on this system. Without it,
 period labels render as missing-glyph boxes.
+
+### Accounts file
+
+`uids`/`names`/`gids` are no longer hardcoded — `load_accounts()` downloads
+`accounts.csv` from the root of the Dropbox app folder at the start of every
+run (`dbx.files_download('/accounts.csv')`) and parses it as plain, headerless
+CSV rows of `uid,name,gid` (one row per tracked user; the same `gid` can
+appear on multiple rows). This means adding, removing, or moving a tracked
+user between groups only requires editing that file in Dropbox — no script
+change or redeploy needed. `uid_gid` (the per-row `uid -> gid` mapping) is used
+in the main loop to filter each group's user list (`group_uids = [uid for uid
+in uids if uid_gid[uid] == gid]`), so a group only shows the users actually
+assigned to it in the file — this replaces the old hardcoded per-group
+membership `if`/`continue` blocks entirely.
+
+A successful download is cached to `accounts_cache.csv` next to the script; if
+the download fails (network issue, or the app's Dropbox connection lacks the
+`files.content.read` scope — see below), the script falls back to that cache
+with a `WARNING:` line, and only raises if there is no cache yet at all (e.g.
+the very first run). `accounts_cache.csv` is a generated file — it's
+`.gitignore`d, not something to hand-edit or commit.
+
+Downloading requires the Dropbox app to have the `files.content.read`
+permission in addition to `files.content.write` (Dropbox App Console >
+Permissions tab); adding a scope to an existing app requires re-authorizing
+(see the recovery procedure below) since the previously issued refresh token
+doesn't cover the new scope — attempting to use it raises
+`stone.backends.python_rsrc.stone_validators.ValidationError: unexpected use
+of the catch-all tag 'other'` (misleading; the real cause, visible only in the
+raw HTTP response, is a missing scope, not a decoding bug).
 
 ### Dropbox upload credentials
 
@@ -97,13 +128,10 @@ logged) and copy its printed `refresh_token` into
 
 ## How it works
 
-- `uids`/`gids`/`names` are parallel lists mapping Fugaku user IDs to group IDs
-  and display names (`users = dict(zip(uids, names))`). Currently
-  `gids = ['hp240019']` and all `uids` are queried against it — there are no
-  per-group membership exceptions right now, but if a group only includes a
-  subset of `uids`, add an `if gid == '<gid>': if uid not in (...): continue`
-  block inside the `uid` loop (this pattern was used previously for
-  `<gid1>`/`<gid2>`, since replaced by `hp240019`).
+- `uids`/`names`/`gids`/`uid_gid` come from `load_accounts()` (see "Accounts
+  file" above), not hardcoded lists — `users = dict(zip(uids, names))` maps uid
+  to display name, and `gids` is the deduplicated, first-seen-order list of
+  every `gid` present in `accounts.csv` (currently just `hp240019`).
 - Periods are fiscal-year halves: `zenki`/前期 = Apr 1–Sep 30, `kouki`/後期 =
   Oct 1–Mar 31, `zenkikan`/全期間 = the two combined. The fiscal year is derived
   from today's date (`fiscal_year = today.year if today.month >= 4 else
@@ -167,9 +195,8 @@ logged) and copy its printed `refresh_token` into
 
 ## Editing notes
 
-- To add/remove tracked users or groups, keep `uids`, `gids`, and `names` in sync
-  (order-dependent zip), and add/update any per-group membership exception blocks
-  (see above) if a group doesn't include every tracked `uid`.
+- To add/remove tracked users or groups, edit `accounts.csv` in the Dropbox
+  app folder directly — no script change needed. Each row is `uid,name,gid`.
 - Allocation quotas are fetched live via `accountj`, not hardcoded — no manual
   update needed when a new fiscal year's allocation is granted.
 - `labels` selects which `pjstatj -c` CSV columns are read; changing it requires
