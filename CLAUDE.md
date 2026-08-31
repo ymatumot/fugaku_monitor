@@ -49,23 +49,28 @@ obtain `DROPBOX_REFRESH_TOKEN`. Do not hardcode these values in the script.
 - `term_start`/`term_end` define the accounting period (`YYYYMMDD:YYYYMMDD`);
   `term_end` defaults to today.
 - `uids`/`gids`/`names` are parallel lists mapping Fugaku user IDs to group IDs and
-  display names (`users = dict(zip(uids, names))`).
-- For each `gid`, the script has hardcoded per-group membership exceptions (e.g.
-  `<gid1>` excludes `<uid4>`; `<gid2>` only includes `<uid1>`/`<uid4>`) — these
-  `if`/`continue` blocks must be updated by hand when group membership changes.
-- For each remaining `(gid, uid)` pair it runs
+  display names (`users = dict(zip(uids, names))`). Currently `gids = ['hp240019']`
+  and all `uids` are queried against it — there are no per-group membership
+  exceptions right now, but if a group only includes a subset of `uids`, add an
+  `if gid == '<gid>': if uid not in (...): continue` block inside the `uid` loop
+  (this pattern was used previously for `<gid1>`/`<gid2>`, since replaced by
+  `hp240019`).
+- For each `(gid, uid)` pair it runs
   `pjstatj -s -u <uid> -g <gid> -t <term> -c > output.csv`, reads the CSV with
   pandas, extracts `ELAPSE_TIM` (elapsed time, parsed as `HH:MM:SS` string slices)
   and `NANUM` (node count), and sums `elapsed_hours * nodes` to get node-hours per
-  user, then sums across users for a group total.
+  user, then sums across users for a group total. `ELAPSE_TIM` is cast to `str`
+  before slicing so that queued/unrun jobs (empty `ELAPSE_TIM`, which pandas may
+  infer as an all-NaN float column after `dropna()`) don't crash the `.str`
+  accessor — this happens in practice for jobs with `ST == 'QUE'`.
 - `output.csv` is a shared scratch file, overwritten each iteration and deleted
   after each `gid` loop — the script is not safe to run concurrently with itself.
 
 ## Editing notes
 
 - To add/remove tracked users or groups, keep `uids`, `gids`, and `names` in sync
-  (order-dependent zip), and check whether the per-group exception `if` blocks
-  around line 26-31 need updating.
+  (order-dependent zip), and add/update any per-group membership exception blocks
+  (see above) if a group doesn't include every tracked `uid`.
 - `labels` selects which `pjstatj -c` CSV columns are read; changing it requires
   matching the downstream column-index parsing of `ELAPSE_TIM` (fixed string
   slices `[0:4]`/`[5:7]`/`[8:10]` assume `HHHH:MM:SS`-style formatting).

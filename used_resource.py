@@ -18,7 +18,7 @@ term = term_start+':'+term_end
 #gids = ['<gid1>','<gid2>']
 #names = ['<user1>','Matsumoto','<user2>','<user3>','<user10>','<user4>','<user5>','<user6>','<user7>','<user8>']
 uids = ['<uid1>','<uid2>','<uid3>','<uid4>','<uid5>','<uid6>']
-gids = ['<gid1>','<gid2>']
+gids = ['hp240019']
 names = ['Matsumoto','<user2>','<user4>','<user5>','<user8>','<user9>']
 users = dict(zip(uids,names))
 
@@ -55,21 +55,15 @@ for gid, ax in zip(gids, axes):
   used_names = list()
   for uid in uids:
 
-     if gid=='<gid1>':
-        if uid == '<uid4>':
-           continue
-     if gid=='<gid2>':
-        if not(uid == '<uid1>' or uid == '<uid4>'):
-           continue
      get_csv = 'pjstatj -s -u '+uid+' -g '+gid+' -t '+term+' -c > '+'output.csv'
      subprocess.call(get_csv,shell=True)
 
      df = pd.read_csv('output.csv')
      df = df[labels].dropna()
 
-     etime_h = df[labels[0]].str[0:4].astype(float)
-     etime_m = df[labels[0]].str[5:7].astype(float)
-     etime_s = df[labels[0]].str[8:10].astype(float)
+     etime_h = df[labels[0]].astype(str).str[0:4].astype(float)
+     etime_m = df[labels[0]].astype(str).str[5:7].astype(float)
+     etime_s = df[labels[0]].astype(str).str[8:10].astype(float)
      etime = etime_h+etime_m/60.0+etime_s/3600.0
      node = df[labels[1]]
      node_hour.append((etime*node).sum())
