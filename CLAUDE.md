@@ -61,12 +61,10 @@ in uids if uid_gid[uid] == gid]`), so a group only shows the users actually
 assigned to it in the file — this replaces the old hardcoded per-group
 membership `if`/`continue` blocks entirely.
 
-A successful download is cached to `accounts_cache.csv` next to the script; if
-the download fails (network issue, or the app's Dropbox connection lacks the
-`files.content.read` scope — see below), the script falls back to that cache
-with a `WARNING:` line, and only raises if there is no cache yet at all (e.g.
-the very first run). `accounts_cache.csv` is a generated file — it's
-`.gitignore`d, not something to hand-edit or commit.
+No local copy is kept — every run re-downloads `accounts.csv`, and the script
+lets `dbx.files_download` raise straight out of `load_accounts()` (no
+try/except) if Dropbox is unreachable or the file is missing, so cron runs
+loudly fail rather than silently working from a stale account list.
 
 Downloading requires the Dropbox app to have the `files.content.read`
 permission in addition to `files.content.write` (Dropbox App Console >

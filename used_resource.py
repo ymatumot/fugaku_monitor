@@ -16,9 +16,6 @@ today = datetime.date.today()
 labels = ['ELAPSE_TIM','NANUM']
 
 dropbox_folder = ''  # app-folder access: uploads go to the app's own dedicated Dropbox folder
-accounts_cache_path = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), 'accounts_cache.csv',
-)
 image_path = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     'resource_usage_'+today.strftime('%Y%m%d')+'.png',
@@ -33,41 +30,29 @@ def get_dropbox_client():
     )
 
 
-def load_accounts(dbx, folder, cache_path):
+def load_accounts(dbx, folder):
     # accounts.csv rows: uid,name,gid -- one row per tracked user. Downloaded
-    # fresh from Dropbox every run so accounts can be added/removed without
-    # touching the script; falls back to the last successfully downloaded
-    # copy (cached next to the script) if Dropbox is unreachable.
+    # fresh from Dropbox on every run (no local copy is kept) so accounts can
+    # be added/removed without touching the script.
     remote_path = folder+'/accounts.csv'
-    try:
-        _, res = dbx.files_download(remote_path)
-        with open(cache_path, 'wb') as f:
-            f.write(res.content)
-        print('downloaded accounts.csv from Dropbox: '+remote_path)
-    except Exception as e:
-        if not os.path.exists(cache_path):
-            raise RuntimeError(
-                'failed to download '+remote_path+' and no local cache at '+cache_path
-            ) from e
-        print('WARNING: failed to download '+remote_path+' ('+str(e)+'), using local cache: '+cache_path)
+    _, res = dbx.files_download(remote_path)
 
     uids, names, gids = [], [], []
     uid_gid = {}
-    with open(cache_path, newline='') as f:
-        for row in csv.reader(f):
-            if not row:
-                continue
-            uid, name, gid = row[0].strip(), row[1].strip(), row[2].strip()
-            uids.append(uid)
-            names.append(name)
-            uid_gid[uid] = gid
-            if gid not in gids:
-                gids.append(gid)
+    for row in csv.reader(res.content.decode('utf-8').splitlines()):
+        if not row:
+            continue
+        uid, name, gid = row[0].strip(), row[1].strip(), row[2].strip()
+        uids.append(uid)
+        names.append(name)
+        uid_gid[uid] = gid
+        if gid not in gids:
+            gids.append(gid)
     return uids, names, gids, uid_gid
 
 
 dbx = get_dropbox_client()
-uids, names, gids, uid_gid = load_accounts(dbx, dropbox_folder, accounts_cache_path)
+uids, names, gids, uid_gid = load_accounts(dbx, dropbox_folder)
 users = dict(zip(uids,names))
 
 # fixed slice colors: each tracked user + その他 get the ggplot cycle colors,
