@@ -10,6 +10,11 @@ environment). It shells out to `pjstatj` (Fujitsu's job accounting CLI) to pull
 per-user job statistics for one or more group IDs (`gid`) and computes total
 node-hours consumed per user and per group over a date range.
 
+After computing node-hours, the script also renders a per-group bar chart (one
+subplot per `gid`, matplotlib, `Agg` backend) to `resource_usage_<YYYYMMDD>.png`
+next to the script, and uploads that PNG to the Dropbox folder `/FugakuMonitor`
+via the Dropbox API.
+
 ## Running the script
 
 ```bash
@@ -17,8 +22,27 @@ python3 used_resource.py
 ```
 
 No arguments — the date range, user IDs, group IDs, and user IDs are hardcoded at
-the top of the file. Requires `pandas` and a working `pjstatj` on PATH (present at
-`/usr/local/bin/pjstatj` on this system).
+the top of the file. Requires `pandas`, `matplotlib`, `dropbox` (`pip install
+dropbox`) and a working `pjstatj` on PATH (present at `/usr/local/bin/pjstatj` on
+this system).
+
+Intended to be run periodically via cron (scheduling itself is not handled by the
+script — add a crontab entry that invokes `python3 used_resource.py`).
+
+### Dropbox upload credentials
+
+The script uploads via a long-lived Dropbox refresh token (short-lived access
+tokens expire in hours and would break unattended cron runs). It reads three
+environment variables at run time — set them wherever cron's environment is
+configured (crontab `VAR=value` lines, or a sourced env file):
+
+- `DROPBOX_APP_KEY`
+- `DROPBOX_APP_SECRET`
+- `DROPBOX_REFRESH_TOKEN`
+
+These come from a Dropbox app created in the Dropbox App Console (scoped app,
+`files.content.write` permission) and an OAuth2 refresh-token flow run once to
+obtain `DROPBOX_REFRESH_TOKEN`. Do not hardcode these values in the script.
 
 ## How it works
 
