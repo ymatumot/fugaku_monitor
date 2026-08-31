@@ -6,19 +6,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This directory contains two scripts:
 
-- `used_resource.py`: tracks compute resource usage (node-hours) on the Fugaku
-  supercomputer (Fujitsu FX1000/PJM environment). It shells out to `pjstatj`
-  (Fujitsu's job accounting CLI) to pull per-user job statistics for a group ID
-  (`gid`) and computes node-hours consumed per user, broken down by fiscal-year
-  period (前期/後期/全期間), against the group's allocated quota.
+- `used_resource.py`: tracks compute (node-hour) and disk usage for a Fugaku
+  group (`gid`) via the `accountj`/`accountd`/`pjstatj` Fujitsu accounting
+  CLIs, and renders pie charts of each tracked user's share against the
+  group's allocated quota.
 - `get_dropbox_refresh_token.py`: a one-off interactive helper to (re-)obtain a
   Dropbox OAuth2 refresh token when `used_resource.py`'s Dropbox upload starts
   failing with an auth error (see "Dropbox upload credentials" below).
 
-After computing node-hours, the script renders a grouped bar chart — one group
-of bars per period, one bar per user within each group, with a red dashed line
-marking that period's allocation — to `resource_usage_<YYYYMMDD>.png` next to
-the script, and uploads that PNG to the Dropbox app's own dedicated folder via
+The rendered image is a 2-row grid of pie charts: the top row has one pie per
+fiscal-year period (前期/後期/全期間) showing node-hour usage split by tracked
+user, a catch-all "その他" slice for the rest of the group, and a "未使用"
+slice for the unused portion of the period's allocated quota (so the whole pie
+represents the quota, not just what's been used so far), each titled with that
+period's usage vs. its allocated quota; the bottom row has one pie per disk
+volume the group has a quota on, same per-user + その他 + 未使用 breakdown,
+titled with usage vs. quota in GiB. It's saved to `resource_usage_<YYYYMMDD>.png`
+next to the script and uploaded to the Dropbox app's own dedicated folder via
 the Dropbox API.
 
 ## Running the script
@@ -28,8 +32,8 @@ python3 used_resource.py
 ```
 
 No arguments — user IDs, group IDs, and names are hardcoded at the top of the
-file. Requires `pandas`, `matplotlib`, `numpy`, `dropbox` (`pip install
-dropbox`) and working `pjstatj`/`accountj` on PATH (both present at
+file. Requires `pandas`, `matplotlib`, `dropbox` (`pip install dropbox`) and
+working `pjstatj`/`accountj`/`accountd` on PATH (all present at
 `/usr/local/bin/` on this system).
 
 Intended to be run periodically via cron (scheduling itself is not handled by the
@@ -107,25 +111,59 @@ logged) and copy its printed `refresh_token` into
   running across fiscal years — it does not need manual updates twice a year.
   A period whose start date is in the future is skipped (reported as 0
   node-hours) rather than queried.
-- `get_period_allocations(gid)` fetches the group's granted node-hour quota per
-  period from `accountj -g <gid> -r 1 -c` (CSV output, values in seconds) rather
-  than a hardcoded number. It reads the `SUBTHEMEPERIOD` rows (period `1` =
-  zenki/前期, period `2` = kouki/後期), divides the `LIMIT` field by 3600 to get
-  node-hours, and derives `zenkikan` as `zenki + kouki`. Note the allocation
-  cap lives on the parent *subtheme* (e.g. `hp240019`'s parent is `hp260014`),
-  not the group itself — `accountj`'s `GROUP` row typically shows `unlimited`.
-  A period is only given a reference line on the graph when its allocation is
-  `> 0`.
-- `node_hours(gid, uid, start, end)` runs
-  `pjstatj -s -u <uid> -g <gid> -t <term> -c > output.csv` for one `(gid, uid,
-  period)` combination, reads the CSV with pandas, extracts `ELAPSE_TIM`
-  (elapsed time, parsed as `HH:MM:SS` string slices) and `NANUM` (node count),
-  and sums `elapsed_hours * nodes` to get node-hours. `ELAPSE_TIM` is cast to
+- `get_period_stats(gid)` fetches the group's granted node-hour quota *and*
+  usage per period from `accountj -g <gid> -r 1 -c` (CSV output, values in
+  seconds) rather than hardcoding the quota. It reads the `SUBTHEMEPERIOD` rows
+  (period `1` = zenki/前期, period `2` = kouki/後期), divides `LIMIT`/`USAGE` by
+  3600 to get node-hours, and derives `zenkikan` as the sum of both. Note the
+  allocation cap lives on the parent *subtheme* (e.g. `hp240019`'s parent is
+  `hp260014`), not the group itself — `accountj`'s plain `GROUP` row typically
+  shows `unlimited`. A period is only given a reference line on the graph when
+  its allocation is `> 0`.
+- `get_group_user_node_hours(gid)` runs `accountj -g <gid> -E -r 1 -c` *once*
+  and reads its `USER` rows to get every group member's node-hour usage — this
+  is a fiscal-year-to-date cumulative total (it has no period breakdown), but
+  is dramatically faster than querying `pjstatj` (this single `accountj -E`
+  call replaced what used to be one slow `pjstatj` call per tracked user, per
+  period). While today is still within zenki (`today < kouki_start`), this
+  cumulative total *is* zenki's total (kouki hasn't started yet), so it's used
+  directly and `pjstatj` is never called. Once kouki has started, zenki is
+  finalized and no longer obtainable from this fiscal-year-to-date number, so
+  `group_node_hours_pjstatj(gid, zenki_start, zenki_end)` is used instead to
+  pin it down — and kouki's total is derived per user by subtracting that from
+  the fast cumulative total.
+- `group_node_hours_pjstatj(gid, start, end)` runs
+  `pjstatj -s -g <gid> -t <term> -c > output.csv` — *without* `-u`, so it's one
+  call for the whole group rather than one per user — reads the CSV with
+  pandas, extracts `ELAPSE_TIM` (elapsed time, parsed as `HH:MM:SS` string
+  slices) and `NANUM` (node count), and groups by `USER` to sum
+  `elapsed_hours * nodes` into node-hours per user. `ELAPSE_TIM` is cast to
   `str` before slicing so that queued/unrun jobs (empty `ELAPSE_TIM`, which
   pandas may infer as an all-NaN float column after `dropna()`) don't crash the
   `.str` accessor — this happens in practice for jobs with `ST == 'QUE'`.
-- `output.csv` is a shared scratch file, overwritten and deleted on every
-  `node_hours()` call — the script is not safe to run concurrently with itself.
+  `output.csv` is a shared scratch file, overwritten and deleted on every call
+  — the script is not safe to run concurrently with itself.
+- `get_group_disk_usage(gid)` runs `accountd -g <gid> -c` and reads its `GROUP`
+  rows to get, per volume, the group's disk quota and total usage in GiB — only
+  volumes with an actual group quota show up here. `get_user_disk_usage(gid)`
+  runs `accountd -g <gid> -m -c` and reads its `USER` rows to get per-`(volume,
+  uid)` usage in GiB, for every user in the group (not just tracked ones).
+- `pie_or_placeholder(ax, values, pie_labels, title)` draws one pie chart:
+  zero-value slices are dropped, wedge labels are shown via `ax.legend()`
+  (rather than `ax.pie(labels=...)`) so that very small slices don't produce
+  overlapping label text, and `autopct` suppresses the percentage/count text
+  for slices under 1% for the same reason. If every value is 0 (e.g. kouki
+  before it starts), it prints "利用なし" instead of an empty pie. Slices
+  always start at 12 o'clock and go clockwise (`startangle=90,
+  counterclock=False`) so every pie is oriented the same way. Colors come from
+  the module-level `color_map` (built once from the `ggplot` style's color
+  cycle for each tracked user's name and "その他", with "未使用" hardcoded to
+  gray) so a given user/slice keeps the same color across every pie in the
+  figure, regardless of which slices happen to be present.
+- The script calls `plt.style.use('ggplot')` right after configuring the font,
+  so `color_map` must be built after that call (it reads
+  `plt.rcParams['axes.prop_cycle']`) — reordering these would silently revert
+  to matplotlib's default color cycle.
 
 ## Editing notes
 
