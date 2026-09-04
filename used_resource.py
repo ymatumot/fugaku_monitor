@@ -153,6 +153,22 @@ def get_user_disk_usage(gid):
     return result
 
 
+TOP_N = 5
+
+
+def top_n_or_other(pairs, other_value, n=TOP_N, other_label='その他'):
+    # pairs: list of (label, value) for tracked users in this pie. Keeps the
+    # top n by value under their own name and folds the rest (plus
+    # other_value, the already-computed rest-of-group total) into a single
+    # other_label total -- so as more users get tracked over time, a pie
+    # never shows more than n+2 slices (top n + その他 + 未使用).
+    pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
+    top = pairs_sorted[:n]
+    rest = pairs_sorted[n:]
+    other_total = other_value + sum(v for _, v in rest)
+    return top, other_total
+
+
 def pie_or_placeholder(ax, values, pie_labels, title):
     pairs = [(v,l) for v,l in zip(values, pie_labels) if v > 0]
     ax.set_title(title)
@@ -200,28 +216,34 @@ for gid in gids:
   fig, axes = plt.subplots(2, max(len(periods),len(volumes)), figsize=(6*max(len(periods),len(volumes)), 10))
 
   for p, (key, label, start, end) in enumerate(periods):
-     values = [node_hour_results[(uid,key)] for uid in group_uids]
-     tracked_total = sum(values)
+     user_values = [(users[uid], node_hour_results[(uid,key)]) for uid in group_uids]
+     tracked_total = sum(v for _, v in user_values)
      group_usage = period_stats[key]['usage']
      others = max(group_usage-tracked_total, 0.0)
      print(gid+' '+label+' total (tracked): ',tracked_total,' (node*hour), group total: ',group_usage,' (node*hour)')
      limit = period_stats[key]['limit']
      unused = max(limit-group_usage, 0.0)
      title = label+'\n使用 {:,.0f} / 割当 {:,.0f} node*hour'.format(group_usage, limit)
-     pie_or_placeholder(axes[0][p], values+[others,unused], [users[uid] for uid in group_uids]+['その他','未使用'], title)
+     top, other_total = top_n_or_other(user_values, others)
+     values = [v for _, v in top]+[other_total, unused]
+     pie_labels = [l for l, _ in top]+['その他','未使用']
+     pie_or_placeholder(axes[0][p], values, pie_labels, title)
 
   for p in range(len(periods), axes.shape[1]):
      axes[0][p].axis('off')
 
   for v, volume in enumerate(volumes):
-     values = [user_disk.get((volume,uid),0.0) for uid in group_uids]
-     tracked_total = sum(values)
+     user_values = [(users[uid], user_disk.get((volume,uid),0.0)) for uid in group_uids]
+     tracked_total = sum(val for _, val in user_values)
      vol_usage = volumes_info[volume]['usage']
      others = max(vol_usage-tracked_total, 0.0)
      limit = volumes_info[volume]['limit']
      unused = max(limit-vol_usage, 0.0)
      title = volume+'\n使用 {:,.0f} / 割当 {:,.0f} GiB'.format(vol_usage, limit)
-     pie_or_placeholder(axes[1][v], values+[others,unused], [users[uid] for uid in group_uids]+['その他','未使用'], title)
+     top, other_total = top_n_or_other(user_values, others)
+     values = [val for _, val in top]+[other_total, unused]
+     pie_labels = [l for l, _ in top]+['その他','未使用']
+     pie_or_placeholder(axes[1][v], values, pie_labels, title)
 
   for v in range(len(volumes), axes.shape[1]):
      axes[1][v].axis('off')

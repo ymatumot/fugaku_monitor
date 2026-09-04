@@ -15,15 +15,17 @@ This directory contains two scripts:
   failing with an auth error (see "Dropbox upload credentials" below).
 
 The rendered image is a 2-row grid of pie charts: the top row has one pie per
-fiscal-year period (前期/後期/全期間) showing node-hour usage split by tracked
-user, a catch-all "その他" slice for the rest of the group, and a "未使用"
-slice for the unused portion of the period's allocated quota (so the whole pie
-represents the quota, not just what's been used so far), each titled with that
-period's usage vs. its allocated quota; the bottom row has one pie per disk
-volume the group has a quota on, same per-user + その他 + 未使用 breakdown,
-titled with usage vs. quota in GiB. It's saved to `resource_usage_<YYYYMMDD>.png`
-next to the script and uploaded to the Dropbox app's own dedicated folder via
-the Dropbox API.
+fiscal-year period (前期/後期/全期間) showing node-hour usage split by the
+top 5 tracked users by usage (by name), a catch-all "その他" slice folding in
+both the rest of the group and any tracked users past the top 5, and a
+"未使用" slice for the unused portion of the period's allocated quota (so the
+whole pie represents the quota, not just what's been used so far), each
+titled with that period's usage vs. its allocated quota; the bottom row has
+one pie per disk volume the group has a quota on, same top-5-by-name + その他
++ 未使用 breakdown, titled with usage vs. quota in GiB. Capping at the top 5
+keeps the chart readable as more users get added to `accounts.csv` over time.
+It's saved to `resource_usage_<YYYYMMDD>.png` next to the script and uploaded
+to the Dropbox app's own dedicated folder via the Dropbox API.
 
 ## Running the script
 
@@ -174,6 +176,13 @@ logged) and copy its printed `refresh_token` into
   volumes with an actual group quota show up here. `get_user_disk_usage(gid)`
   runs `accountd -g <gid> -m -c` and reads its `USER` rows to get per-`(volume,
   uid)` usage in GiB, for every user in the group (not just tracked ones).
+- `top_n_or_other(pairs, other_value, n=TOP_N)` takes the tracked users'
+  `(name, value)` pairs for one pie, keeps the top `n` (`TOP_N = 5`) by value
+  under their own name, and folds the rest into a single total added to
+  `other_value` (the already-computed rest-of-group amount) — so a pie never
+  shows more than `TOP_N + 2` slices (top N users + その他 + 未使用) no
+  matter how many users `accounts.csv` ends up tracking. Both the node-hour
+  loop and the disk-usage loop call this before calling `pie_or_placeholder`.
 - `pie_or_placeholder(ax, values, pie_labels, title)` draws one pie chart:
   zero-value slices are dropped, wedge labels are shown via `ax.legend()`
   (rather than `ax.pie(labels=...)`) so that very small slices don't produce
