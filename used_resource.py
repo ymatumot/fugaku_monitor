@@ -3,6 +3,7 @@ import subprocess
 import datetime
 import os
 import csv
+import hashlib
 import matplotlib
 matplotlib.use('Agg')
 matplotlib.rcParams['font.family'] = ['DejaVu Sans', 'Droid Sans Japanese']
@@ -55,10 +56,21 @@ dbx = get_dropbox_client()
 uids, names, gids, uid_gid = load_accounts(dbx, dropbox_folder)
 users = dict(zip(uids,names))
 
-# fixed slice colors: each tracked user + その他 get the ggplot cycle colors,
-# 未使用 is always gray, regardless of which slices are present in a given pie
+# fixed slice colors: a user's color is derived from a hash of their uid, not
+# their position in accounts.csv, so it stays the same across runs even as
+# users are added/removed/reordered in the file. その他/未使用 get their own
+# reserved colors (その他 taken out of the per-user pool so it can never
+# collide with a user's hash color).
 _cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
-color_map = {name: _cycle[i % len(_cycle)] for i, name in enumerate(names+['その他'])}
+_OTHER_COLOR = _cycle[-1]
+_USER_COLORS = _cycle[:-1]
+
+def _color_for_uid(uid):
+    idx = int(hashlib.md5(uid.encode()).hexdigest(), 16) % len(_USER_COLORS)
+    return _USER_COLORS[idx]
+
+color_map = {users[uid]: _color_for_uid(uid) for uid in uids}
+color_map['その他'] = _OTHER_COLOR
 color_map['未使用'] = 'gray'
 
 # fiscal-year periods: zenki (前期) = Apr-Sep, kouki (後期) = Oct-Mar

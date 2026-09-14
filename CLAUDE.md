@@ -192,10 +192,15 @@ logged) and copy its printed `refresh_token` into
   before it starts), it prints "利用なし" instead of an empty pie. Slices
   always start at 12 o'clock and go clockwise (`startangle=90,
   counterclock=False`) so every pie is oriented the same way. Colors come from
-  the module-level `color_map` (built once from the `ggplot` style's color
-  cycle for each tracked user's name and "その他", with "未使用" hardcoded to
-  gray) so a given user/slice keeps the same color across every pie in the
-  figure, regardless of which slices happen to be present.
+  the module-level `color_map`, built once per run: each tracked user's color
+  is `_color_for_uid(uid)`, a deterministic hash of their `uid` (`md5(uid) %
+  len(_USER_COLORS)`) into the `ggplot` style's color cycle *minus its last
+  color* — hashing on `uid` rather than list position means a user's color
+  stays fixed across runs even as `accounts.csv` gains, loses, or reorders
+  rows. "その他" is hardcoded to that reserved last cycle color (so it can
+  never collide with a user's hash color) and "未使用" is hardcoded to gray.
+  A given user/slice keeps the same color across every pie in the figure,
+  regardless of which slices happen to be present.
 - The script calls `plt.style.use('ggplot')` right after configuring the font,
   so `color_map` must be built after that call (it reads
   `plt.rcParams['axes.prop_cycle']`) — reordering these would silently revert
