@@ -1,4 +1,6 @@
-resource_usage_*.png
-cron.log
+node_hours_*.png
+disk_usage_*.png
+node_hours_cron.log
+disk_usage_cron.log
 output.csv
 __pycache__/
