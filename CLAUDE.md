@@ -129,12 +129,17 @@ On this system the three variables live in `~/.config/fugaku_monitor.env`
 running each script:
 
 ```cron
-0 6 * * * . $HOME/.config/fugaku_monitor.env && /home/<uid1>/miniconda3/bin/python3 /vol0006/mdt3/home/<uid1>/scripts/node_hours.py >> /vol0006/mdt3/home/<uid1>/scripts/node_hours_cron.log 2>&1
-30 6 * * 1 . $HOME/.config/fugaku_monitor.env && /home/<uid1>/miniconda3/bin/python3 /vol0006/mdt3/home/<uid1>/scripts/disk_usage.py >> /vol0006/mdt3/home/<uid1>/scripts/disk_usage_cron.log 2>&1
+0 6 * * * . $HOME/.config/fugaku_monitor.env && $HOME/miniconda3/bin/python3 $HOME/scripts/node_hours.py >> $HOME/scripts/node_hours_cron.log 2>&1
+30 6 * * 1 . $HOME/.config/fugaku_monitor.env && $HOME/miniconda3/bin/python3 $HOME/scripts/disk_usage.py >> $HOME/scripts/disk_usage_cron.log 2>&1
 ```
 
 (`disk_usage.py` runs Mondays at 6:30 — offset from `node_hours.py`'s 6:00 run
-so the two don't overlap; the day/time is arbitrary and easy to change.)
+so the two don't overlap; the day/time is arbitrary and easy to change. `cron`
+sets `$HOME` from the crontab owner's passwd entry, and `$HOME/scripts` here
+resolves to the same directory as this repo's absolute path — `$HOME` is
+`/home/<uid>`, a symlink/bind mount to `/vol0006/mdt3/home/<uid>` on this
+system — so this line has no hardcoded username and works unchanged for
+whichever account's crontab it's installed in.)
 
 A refresh token normally never expires on its own — it stops working only if
 the app's Dropbox connection is revoked (Dropbox account settings > Connected
