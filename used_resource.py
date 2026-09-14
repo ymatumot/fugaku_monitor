@@ -255,3 +255,4 @@ for gid in gids:
   print('saved graph: '+image_path)
 
 upload_to_dropbox(dbx, image_path, dropbox_folder)
+os.remove(image_path)

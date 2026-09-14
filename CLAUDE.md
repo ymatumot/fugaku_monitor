@@ -24,8 +24,9 @@ titled with that period's usage vs. its allocated quota; the bottom row has
 one pie per disk volume the group has a quota on, same top-5-by-name + その他
 + 未使用 breakdown, titled with usage vs. quota in GiB. Capping at the top 5
 keeps the chart readable as more users get added to `accounts.csv` over time.
-It's saved to `resource_usage_<YYYYMMDD>.png` next to the script and uploaded
-to the Dropbox app's own dedicated folder via the Dropbox API.
+It's saved to `resource_usage_<YYYYMMDD>.png` next to the script, uploaded
+to the Dropbox app's own dedicated folder via the Dropbox API, and then the
+local copy is deleted — the PNG only persists in Dropbox, not on disk.
 
 ## Running the script
 
