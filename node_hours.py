@@ -18,10 +18,15 @@ image_path = os.path.join(
     'node_hours_'+today.strftime('%Y%m%d')+'.png',
 )
 
+GID = 'hp240019'  # the only Fugaku group tracked so far; accounts.csv's
+                  # "group" column is a subgroup label, not this id --
+                  # per-gid tracking from accounts.csv is a future addition
+
 dbx = common.get_dropbox_client()
-uids, names, gids, uid_gid = common.load_accounts(dbx, dropbox_folder)
+uids, names, groups, uid_group = common.load_accounts(dbx, dropbox_folder)
 users = dict(zip(uids,names))
 color_map = common.build_color_map(uids, users)
+group_color_map = common.build_group_color_map(groups)
 
 # fiscal-year periods: zenki (前期) = Apr-Sep, kouki (後期) = Oct-Mar
 fiscal_year = today.year if today.month >= 4 else today.year - 1
@@ -89,47 +94,56 @@ def get_period_stats(gid):
     return stats
 
 
-for gid in gids:
-  group_uids = [uid for uid in uids if uid_gid[uid] == gid]
-  period_stats = get_period_stats(gid)
-  ytd_usage = get_group_user_node_hours(gid)
-  if today < kouki_start:
-     zenki_usage = ytd_usage
-  else:
-     zenki_usage = group_node_hours_pjstatj(gid, zenki_start, zenki_end)
+period_stats = get_period_stats(GID)
+ytd_usage = get_group_user_node_hours(GID)
+if today < kouki_start:
+   zenki_usage = ytd_usage
+else:
+   zenki_usage = group_node_hours_pjstatj(GID, zenki_start, zenki_end)
 
-  node_hour_results = dict()
-  for uid in group_uids:
-     ytd = ytd_usage.get(uid, 0.0)
-     zenki = zenki_usage.get(uid, 0.0)
-     kouki = 0.0 if today < kouki_start else max(ytd-zenki, 0.0)
-     node_hour_results[(uid,'zenki')] = zenki
-     node_hour_results[(uid,'kouki')] = kouki
-     node_hour_results[(uid,'zenkikan')] = ytd
-     for key, label, start, end in periods:
-        print(gid+' '+label+' '+users[uid]+': ',node_hour_results[(uid,key)],' (node*hour)')
+node_hour_results = dict()
+for uid in uids:
+   ytd = ytd_usage.get(uid, 0.0)
+   zenki = zenki_usage.get(uid, 0.0)
+   kouki = 0.0 if today < kouki_start else max(ytd-zenki, 0.0)
+   node_hour_results[(uid,'zenki')] = zenki
+   node_hour_results[(uid,'kouki')] = kouki
+   node_hour_results[(uid,'zenkikan')] = ytd
+   for key, label, start, end in periods:
+      print(GID+' '+label+' '+users[uid]+': ',node_hour_results[(uid,key)],' (node*hour)')
 
-  fig, axes = plt.subplots(1, len(periods), figsize=(6*len(periods), 5))
+fig, axes = plt.subplots(2, len(periods), figsize=(6*len(periods), 10))
 
-  for p, (key, label, start, end) in enumerate(periods):
-     user_values = [(users[uid], node_hour_results[(uid,key)]) for uid in group_uids]
-     tracked_total = sum(v for _, v in user_values)
-     group_usage = period_stats[key]['usage']
-     others = max(group_usage-tracked_total, 0.0)
-     print(gid+' '+label+' total (tracked): ',tracked_total,' (node*hour), group total: ',group_usage,' (node*hour)')
-     limit = period_stats[key]['limit']
-     unused = max(limit-group_usage, 0.0)
-     title = label+'\n使用 {:,.0f} / 割当 {:,.0f} node*hour'.format(group_usage, limit)
-     top, other_total = common.top_n_or_other(user_values, others)
-     values = [v for _, v in top]+[other_total, unused]
-     pie_labels = [l for l, _ in top]+['その他','未使用']
-     common.pie_or_placeholder(axes[p], values, pie_labels, title, color_map)
+for p, (key, label, start, end) in enumerate(periods):
+   user_values = [(users[uid], node_hour_results[(uid,key)]) for uid in uids]
+   tracked_total = sum(v for _, v in user_values)
+   group_usage = period_stats[key]['usage']
+   others = max(group_usage-tracked_total, 0.0)
+   print(GID+' '+label+' total (tracked): ',tracked_total,' (node*hour), group total: ',group_usage,' (node*hour)')
+   limit = period_stats[key]['limit']
+   unused = max(limit-group_usage, 0.0)
+   title = label+'\n使用 {:,.0f} / 割当 {:,.0f} node*hour'.format(group_usage, limit)
+   top, other_total = common.top_n_or_other(user_values, others)
+   values = [v for _, v in top]+[other_total, unused]
+   pie_labels = [l for l, _ in top]+['その他','未使用']
+   common.pie_or_placeholder(axes[0, p], values, pie_labels, title, color_map)
 
-  fig.suptitle(gid+' node-hour usage as of '+today.strftime('%Y-%m-%d')+' (by fiscal-year period)')
-  fig.tight_layout()
-  fig.savefig(image_path)
-  plt.close(fig)
-  print('saved graph: '+image_path)
+   subgroup_totals = {}
+   for uid in uids:
+      subgroup_totals.setdefault(uid_group[uid], 0.0)
+      subgroup_totals[uid_group[uid]] += node_hour_results[(uid,key)]
+   subgroup_values = list(subgroup_totals.items())
+   subgroup_title = label+' (グループ別)\n使用 {:,.0f} / 割当 {:,.0f} node*hour'.format(group_usage, limit)
+   sub_top, sub_other_total = common.top_n_or_other(subgroup_values, others)
+   sub_values = [v for _, v in sub_top]+[sub_other_total, unused]
+   sub_pie_labels = [l for l, _ in sub_top]+['その他','未使用']
+   common.pie_or_placeholder(axes[1, p], sub_values, sub_pie_labels, subgroup_title, group_color_map)
+
+fig.suptitle(GID+' node-hour usage as of '+today.strftime('%Y-%m-%d')+' (by fiscal-year period; top row per-user, bottom row per-group)')
+fig.tight_layout()
+fig.savefig(image_path)
+plt.close(fig)
+print('saved graph: '+image_path)
 
 common.upload_to_dropbox(dbx, image_path, dropbox_folder)
 os.remove(image_path)
