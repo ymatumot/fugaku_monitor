@@ -1,6 +1,7 @@
 import os
-import csv
+import io
 import hashlib
+import openpyxl
 import matplotlib
 matplotlib.use('Agg')
 matplotlib.rcParams['font.family'] = ['DejaVu Sans', 'Droid Sans Japanese']
@@ -29,27 +30,33 @@ def get_dropbox_client():
 
 
 def load_accounts(dbx, folder):
-    # accounts.csv rows: uid,name,group -- one row per tracked user, with a
-    # header row naming the columns. Downloaded fresh from Dropbox on every
-    # run (no local copy is kept) so accounts can be added/removed without
-    # touching either script. "group" is a subgroup label for reporting
-    # (currently a placeholder "PIC" for everyone) -- it is NOT the Fugaku
-    # accountj/accountd group id, which each script hardcodes separately
-    # until per-gid tracking is reintroduced.
-    remote_path = folder+'/accounts.csv'
+    # accounts.xlsx: first worksheet has a header row (uid,name,group)
+    # followed by one row per tracked user. Downloaded fresh from Dropbox on
+    # every run (no local copy is kept) so accounts can be added/removed
+    # without touching either script. "group" is a subgroup label for
+    # reporting (currently a placeholder "PIC" for everyone) -- it is NOT the
+    # Fugaku accountj/accountd group id, which each script hardcodes
+    # separately until per-gid tracking is reintroduced.
+    remote_path = folder+'/accounts.xlsx'
     _, res = dbx.files_download(remote_path)
+
+    wb = openpyxl.load_workbook(io.BytesIO(res.content), read_only=True, data_only=True)
+    rows = wb.active.iter_rows(values_only=True)
+    header = [str(h).strip() for h in next(rows)]
 
     uids, names, groups = [], [], []
     uid_group = {}
-    for row in csv.DictReader(res.content.decode('utf-8').splitlines()):
-        if not row:
+    for values in rows:
+        if values is None or all(v is None for v in values):
             continue
-        uid, name, group = row['uid'].strip(), row['name'].strip(), row['group'].strip()
+        row = dict(zip(header, values))
+        uid, name, group = str(row['uid']).strip(), str(row['name']).strip(), str(row['group']).strip()
         uids.append(uid)
         names.append(name)
         uid_group[uid] = group
         if group not in groups:
             groups.append(group)
+    wb.close()
     return uids, names, groups, uid_group
 
 

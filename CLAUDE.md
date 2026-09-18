@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This directory contains four scripts:
 
 - `resource_common.py`: shared code imported by both monitoring scripts below
-  — Dropbox client/upload, `accounts.csv` loading, pie-chart color assignment
+  — Dropbox client/upload, `accounts.xlsx` loading, pie-chart color assignment
   and drawing. Not run directly.
 - `node_hours.py`: tracks compute (node-hour) usage for a Fugaku group
   (`gid`) via the `accountj`/`pjstatj` Fujitsu accounting CLIs, and renders a
@@ -29,7 +29,7 @@ wanted.
 Each script renders a two-row grid of pie charts and uploads it as its own
 image: the top row breaks usage down by tracked user (top 5 by usage, by
 name), the bottom row breaks the same usage down by subgroup instead (the
-`group` column in `accounts.csv` — currently just the placeholder `PIC` for
+`group` column in `accounts.xlsx` — currently just the placeholder `PIC` for
 everyone, since no real subgrouping exists yet). Both rows share the same
 column layout and a "未使用" slice for the unused portion of the allocated
 quota (so the whole pie represents the quota, not just what's been used so
@@ -45,7 +45,7 @@ other identities. `node_hours.py` produces one column per fiscal-year period
 (前期/後期/全期間), each titled with that period's usage vs. its allocated
 quota; `disk_usage.py` produces one column per disk volume the group has a
 quota on, titled with usage vs. quota in GiB. Capping at the top 5 keeps each
-chart readable as more users/subgroups get added to `accounts.csv` over time.
+chart readable as more users/subgroups get added to `accounts.xlsx` over time.
 
 Each image is saved as `node_hours_<YYYYMMDD>.png` / `disk_usage_<YYYYMMDD>.png`
 next to the scripts, uploaded to the Dropbox app's own dedicated folder via
@@ -59,12 +59,13 @@ python3 node_hours.py
 python3 disk_usage.py
 ```
 
-No arguments — tracked user IDs, names, and group IDs come from `accounts.csv`
+No arguments — tracked user IDs, names, and group IDs come from `accounts.xlsx`
 in the Dropbox app folder, downloaded fresh on every run by each script (see
 "Accounts file" below). Requires `pandas` (`node_hours.py` only), `matplotlib`,
-`dropbox` (`pip install dropbox`) and working `pjstatj`/`accountj`
-(`node_hours.py`) / `accountd` (`disk_usage.py`) on PATH (all present at
-`/usr/local/bin/` on this system).
+`dropbox` (`pip install dropbox`), `openpyxl` (`pip install openpyxl`, for
+reading `accounts.xlsx`) and working `pjstatj`/`accountj` (`node_hours.py`) /
+`accountd` (`disk_usage.py`) on PATH (all present at `/usr/local/bin/` on
+this system).
 
 Intended to be run periodically via cron on two different schedules
 (scheduling itself is not handled by the scripts — see the crontab below):
@@ -84,12 +85,12 @@ plt`, so the backend/font/style are already configured when pyplot is used.
 ### Accounts file
 
 `uids`/`names`/`groups` are not hardcoded — `resource_common.load_accounts()`
-downloads `accounts.csv` from `dropbox_folder+'/accounts.csv'` (see
+downloads `accounts.xlsx` from `dropbox_folder+'/accounts.xlsx'` (see
 "Dropbox upload credentials" below for what `dropbox_folder` resolves to —
 the app folder root by default, or `DROPBOX_FOLDER`'s value) at the start of
-every run and parses it via
-`csv.DictReader`, keyed on a header row `uid,name,group` followed by one row
-per tracked user (the same `group` value can appear on multiple rows). This
+every run and parses it via `openpyxl` (`read_only=True, data_only=True`,
+first worksheet only), keyed on a header row `uid,name,group` followed by one
+row per tracked user (the same `group` value can appear on multiple rows). This
 means adding, removing, or moving a tracked user between subgroups only
 requires editing that file in Dropbox — no script change or redeploy needed,
 in either script. `uid_group` (the per-row `uid -> group` mapping) is used in
@@ -99,11 +100,11 @@ pies.
 Note `group` here is a subgroup *label* for the per-group breakdown pies, not
 the Fugaku `accountj`/`accountd` group id — that id is currently hardcoded as
 `GID = 'hp240019'` at the top of each script, since only one Fugaku group has
-ever been tracked. Reading it from `accounts.csv` instead (to support
+ever been tracked. Reading it from `accounts.xlsx` instead (to support
 tracking multiple real Fugaku groups) is a planned future change, not
 implemented yet.
 
-No local copy is kept — every run re-downloads `accounts.csv`, and
+No local copy is kept — every run re-downloads `accounts.xlsx`, and
 `load_accounts()` lets `dbx.files_download` raise straight out of it (no
 try/except) if Dropbox is unreachable or the file is missing, so cron runs
 loudly fail rather than silently working from a stale account list.
@@ -203,7 +204,7 @@ only needs doing once even though two scripts use it.
   env vars above.
 - `load_accounts(dbx, folder)` returns `uids, names, groups, uid_group` (see
   "Accounts file" above); `groups` is the deduplicated, first-seen-order list
-  of every `group` value present in `accounts.csv` (currently just `PIC`).
+  of every `group` value present in `accounts.xlsx` (currently just `PIC`).
   Each script does `users = dict(zip(uids, names))` itself to map uid to
   display name.
 - `upload_to_dropbox(dbx, local_path, folder)` uploads with
@@ -218,7 +219,7 @@ only needs doing once even though two scripts use it.
   skill's validated palette reference, spread out (not consecutive steps) for
   maximum mutual contrast. Both call the shared `_assign_distinct_colors(keys,
   pool)`: each key's preferred slot is a hash of the key (stable across runs,
-  independent of accounts.csv's row order — keys are processed in `sorted()`
+  independent of accounts.xlsx's row order — keys are processed in `sorted()`
   order so the outcome depends only on the *set* of keys present), but if that
   slot is already taken by another key in the same call, it linear-probes
   forward to the next free one — so two different tracked users (or two
@@ -244,7 +245,7 @@ only needs doing once even though two scripts use it.
   under their own name, and folds the rest into a single total added to
   `other_value` (the already-computed rest-of-group amount) — so a pie never
   shows more than `TOP_N + 2` slices (top N users + その他 + 未使用) no
-  matter how many users `accounts.csv` ends up tracking.
+  matter how many users `accounts.xlsx` ends up tracking.
 - `pie_or_placeholder(ax, values, pie_labels, title, color_map)` draws one pie
   chart: zero-value slices are dropped, wedge labels are shown via
   `ax.legend()` (rather than `ax.pie(labels=...)`) so that very small slices
@@ -257,7 +258,7 @@ only needs doing once even though two scripts use it.
 ### `node_hours.py`
 
 - `GID` (currently `'hp240019'`) is the hardcoded real Fugaku group id passed
-  to `accountj`/`pjstatj`; every tracked uid in `accounts.csv` is queried
+  to `accountj`/`pjstatj`; every tracked uid in `accounts.xlsx` is queried
   under it regardless of that user's `group` (subgroup) value. The top-row
   pies break the result down per user (as before); the bottom-row pies total
   the same per-user numbers by `uid_group[uid]` instead, for the per-subgroup
@@ -328,15 +329,15 @@ only needs doing once even though two scripts use it.
 
 ## Editing notes
 
-- To add/remove tracked users or subgroups, edit `accounts.csv` in the
+- To add/remove tracked users or subgroups, edit `accounts.xlsx` in the
   Dropbox app folder directly — no script change needed. It has a header row
   (`uid,name,group`) followed by one `uid,name,group` row per tracked user;
   `group` is a subgroup label (currently `PIC` for everyone), not the real
   Fugaku group id.
 - To track a different (or additional) real Fugaku group, change/add the
   hardcoded `GID` constant near the top of `node_hours.py`/`disk_usage.py` —
-  this is not read from `accounts.csv`. Supporting multiple real Fugaku
-  groups from `accounts.csv` itself is a planned future change, not
+  this is not read from `accounts.xlsx`. Supporting multiple real Fugaku
+  groups from `accounts.xlsx` itself is a planned future change, not
   implemented yet.
 - Allocation quotas are fetched live via `accountj`, not hardcoded — no manual
   update needed when a new fiscal year's allocation is granted.
