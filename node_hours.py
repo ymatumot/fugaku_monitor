@@ -12,7 +12,7 @@ today = datetime.date.today()
 #labels = ['ELAPSE_TIM','NRNUM']
 labels = ['ELAPSE_TIM','NANUM']
 
-dropbox_folder = ''  # app-folder access: uploads go to the app's own dedicated Dropbox folder
+dropbox_folder = os.environ.get('DROPBOX_FOLDER', '')  # '' = the app's own dedicated Dropbox folder (App folder access)
 image_path = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     'node_hours_'+today.strftime('%Y%m%d')+'.png',

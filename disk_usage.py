@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 today = datetime.date.today()
 
-dropbox_folder = ''  # app-folder access: uploads go to the app's own dedicated Dropbox folder
+dropbox_folder = os.environ.get('DROPBOX_FOLDER', '')  # '' = the app's own dedicated Dropbox folder (App folder access)
 image_path = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     'disk_usage_'+today.strftime('%Y%m%d')+'.png',

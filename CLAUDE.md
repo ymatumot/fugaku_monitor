@@ -84,8 +84,10 @@ plt`, so the backend/font/style are already configured when pyplot is used.
 ### Accounts file
 
 `uids`/`names`/`groups` are not hardcoded — `resource_common.load_accounts()`
-downloads `accounts.csv` from the root of the Dropbox app folder at the start
-of every run (`dbx.files_download('/accounts.csv')`) and parses it via
+downloads `accounts.csv` from `dropbox_folder+'/accounts.csv'` (see
+"Dropbox upload credentials" below for what `dropbox_folder` resolves to —
+the app folder root by default, or `DROPBOX_FOLDER`'s value) at the start of
+every run and parses it via
 `csv.DictReader`, keyed on a header row `uid,name,group` followed by one row
 per tracked user (the same `group` value can appear on multiple rows). This
 means adding, removing, or moving a tracked user between subgroups only
@@ -118,27 +120,44 @@ raw HTTP response, is a missing scope, not a decoding bug).
 ### Dropbox upload credentials
 
 Both scripts upload via a long-lived Dropbox refresh token (short-lived access
-tokens expire in hours and would break unattended cron runs). Each reads three
-environment variables at run time (via `resource_common.get_dropbox_client()`)
-— set them wherever cron's environment is configured (crontab `VAR=value`
-lines, or a sourced env file):
+tokens expire in hours and would break unattended cron runs). Each reads
+environment variables at run time (via `resource_common.get_dropbox_client()`
+for the first three; each script reads `DROPBOX_FOLDER` itself) — set them
+wherever cron's environment is configured (crontab `VAR=value` lines, or a
+sourced env file):
 
 - `DROPBOX_APP_KEY`
 - `DROPBOX_APP_SECRET`
 - `DROPBOX_REFRESH_TOKEN`
+- `DROPBOX_FOLDER` (optional — see below)
 
-These come from a Dropbox app created in the Dropbox App Console (scoped app,
-**App folder** access, `files.content.write` permission) and an OAuth2
-refresh-token flow run once to obtain `DROPBOX_REFRESH_TOKEN`. Do not hardcode
-these values in either script.
+The first three come from a Dropbox app created in the Dropbox App Console
+and an OAuth2 refresh-token flow run once to obtain `DROPBOX_REFRESH_TOKEN`.
+Do not hardcode these values in either script — this is also why
+`DROPBOX_FOLDER` is an env var rather than a literal path in the code: the
+scripts are meant to be published (e.g. on GitHub), and a real folder name is
+config, not something that belongs in public source.
 
-Because the app uses App folder access (not Full Dropbox), all API paths are
-relative to the app's own dedicated folder in the connected Dropbox account —
-`dropbox_folder = ''` in both scripts means "the app folder's root", not the
-Dropbox root. If the access type is ever changed back to Full Dropbox (or to a
-different app folder name), the existing refresh token becomes invalid for the
-new scope and must be reobtained (see the recovery procedure below) — changing
-access type always requires re-authorizing.
+`dropbox_folder = os.environ.get('DROPBOX_FOLDER', '')` in both scripts
+defaults to `''` when unset. What `''` means depends on the app's access
+type, chosen in the Dropbox App Console when the app was created:
+
+- **App folder** access (this app's original setup): all API paths are
+  relative to the app's own dedicated folder in the connected account, so
+  `''` means "that app folder's root" — there is no real folder name to leak,
+  since the app can't reach anywhere else in the account regardless of what
+  `DROPBOX_FOLDER` is set to.
+- **Full Dropbox** access (needed to read/write a folder another user shared
+  with you and gave you edit access to, since that's outside any App folder):
+  paths are relative to the Dropbox account root, so `DROPBOX_FOLDER` must be
+  set to the shared folder's actual path (e.g. `/SharedFolderName`, as it
+  appears mounted in your own Dropbox) for uploads/downloads to land there
+  instead of the account root.
+
+Changing access type (or, for App folder access, the app's name/folder)
+always invalidates the existing refresh token — the previously issued token
+doesn't cover the new scope — and requires re-authorizing (see the recovery
+procedure below) to get a new one.
 
 On this system the three variables live in `~/.config/fugaku_monitor.env`
 (`chmod 600`, `export VAR=value` lines) and cron sources that file before
