@@ -14,15 +14,12 @@ image_path = os.path.join(
     'disk_usage_'+today.strftime('%Y%m%d')+'.png',
 )
 
-GID = 'hp240019'  # the only Fugaku group tracked so far; accounts.csv's
-                  # "group" column is a subgroup label, not this id --
-                  # per-gid tracking from accounts.csv is a future addition
-
+GID = common.GID
 dbx = common.get_dropbox_client()
 uids, names, groups, uid_group = common.load_accounts(dbx, dropbox_folder)
 users = dict(zip(uids,names))
-color_map = common.build_color_map(uids, users, other_label='未反映')
-group_color_map = common.build_group_color_map(groups, other_label='未反映')
+color_map = common.build_color_map(uids, users)
+group_color_map = common.build_group_color_map(groups)  # other_label defaults to 未反映
 
 
 def get_group_disk_usage(gid):
@@ -69,18 +66,24 @@ else:
       title = volume+'\n使用 {:,.0f} / 割当 {:,.0f} GiB'.format(vol_usage, limit)
       top, other_total = common.top_n_or_other(user_values, others)
       values = [val for _, val in top]+[other_total, unused]
-      pie_labels = [l for l, _ in top]+['未反映','未使用']
+      pie_labels = [l for l, _ in top]+['その他','未使用']
       common.pie_or_placeholder(axes[0, v], values, pie_labels, title, color_map)
 
+      # every tracked user belongs to one of a small, known set of subgroups,
+      # so unlike the top-5-of-many per-user breakdown above, there's no
+      # "other subgroup" to fold in -- show every subgroup by name, and let
+      # the leftover (others, the same per-user-snapshot lag computed above)
+      # be labeled 未反映 rather than その他, since here it can only mean
+      # "not yet reflected in accountd -m's stale snapshot," never "some
+      # other, unlisted subgroup."
       subgroup_totals = {}
       for uid in uids:
          subgroup_totals.setdefault(uid_group[uid], 0.0)
          subgroup_totals[uid_group[uid]] += user_disk.get((volume,uid),0.0)
       subgroup_values = list(subgroup_totals.items())
       subgroup_title = volume+' (グループ別)\n使用 {:,.0f} / 割当 {:,.0f} GiB'.format(vol_usage, limit)
-      sub_top, sub_other_total = common.top_n_or_other(subgroup_values, others)
-      sub_values = [v for _, v in sub_top]+[sub_other_total, unused]
-      sub_pie_labels = [l for l, _ in sub_top]+['未反映','未使用']
+      sub_values = [v for _, v in subgroup_values]+[others, unused]
+      sub_pie_labels = [l for l, _ in subgroup_values]+['未反映','未使用']
       common.pie_or_placeholder(axes[1, v], sub_values, sub_pie_labels, subgroup_title, group_color_map)
 
 fig.suptitle(GID+' disk usage as of '+today.strftime('%Y-%m-%d')+' (by volume; top row per-user, bottom row per-group)')

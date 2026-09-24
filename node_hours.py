@@ -18,15 +18,12 @@ image_path = os.path.join(
     'node_hours_'+today.strftime('%Y%m%d')+'.png',
 )
 
-GID = 'hp240019'  # the only Fugaku group tracked so far; accounts.csv's
-                  # "group" column is a subgroup label, not this id --
-                  # per-gid tracking from accounts.csv is a future addition
-
+GID = common.GID
 dbx = common.get_dropbox_client()
 uids, names, groups, uid_group = common.load_accounts(dbx, dropbox_folder)
 users = dict(zip(uids,names))
 color_map = common.build_color_map(uids, users)
-group_color_map = common.build_group_color_map(groups)
+group_color_map = common.build_group_color_map(groups)  # other_label defaults to 未反映
 
 # fiscal-year periods: zenki (前期) = Apr-Sep, kouki (後期) = Oct-Mar
 fiscal_year = today.year if today.month >= 4 else today.year - 1
@@ -128,15 +125,19 @@ for p, (key, label, start, end) in enumerate(periods):
    pie_labels = [l for l, _ in top]+['その他','未使用']
    common.pie_or_placeholder(axes[0, p], values, pie_labels, title, color_map)
 
+   # every tracked user belongs to one of a small, known set of subgroups, so
+   # unlike the top-5-of-many per-user breakdown above, there's no "other
+   # subgroup" to fold in -- show every subgroup by name, and let the
+   # leftover (others, untracked-user usage the group total includes but no
+   # subgroup total can) be labeled 未反映 rather than その他.
    subgroup_totals = {}
    for uid in uids:
       subgroup_totals.setdefault(uid_group[uid], 0.0)
       subgroup_totals[uid_group[uid]] += node_hour_results[(uid,key)]
    subgroup_values = list(subgroup_totals.items())
    subgroup_title = label+' (グループ別)\n使用 {:,.0f} / 割当 {:,.0f} node*hour'.format(group_usage, limit)
-   sub_top, sub_other_total = common.top_n_or_other(subgroup_values, others)
-   sub_values = [v for _, v in sub_top]+[sub_other_total, unused]
-   sub_pie_labels = [l for l, _ in sub_top]+['その他','未使用']
+   sub_values = [v for _, v in subgroup_values]+[others, unused]
+   sub_pie_labels = [l for l, _ in subgroup_values]+['未反映','未使用']
    common.pie_or_placeholder(axes[1, p], sub_values, sub_pie_labels, subgroup_title, group_color_map)
 
 fig.suptitle(GID+' node-hour usage as of '+today.strftime('%Y-%m-%d')+' (by fiscal-year period; top row per-user, bottom row per-group)')

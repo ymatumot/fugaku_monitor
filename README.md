@@ -5,10 +5,15 @@ usage, render the breakdown as pie charts, and upload the images to Dropbox
 so they're easy to check without logging into the login node.
 
 - **`node_hours.py`** — node-hour usage per fiscal-year period (前期/後期/全期間),
-  broken down per tracked user and per subgroup. Cheap to query — meant to
-  run **daily**.
+  broken down per tracked user and per subgroup. Cheap to query, so it can
+  run as often as daily if you want fresher numbers.
 - **`disk_usage.py`** — disk usage per volume, same per-user/per-subgroup
-  breakdown. `accountd` is slow, so this is meant to run **weekly**.
+  breakdown. `accountd` is slow, so this is usually run weekly rather than
+  daily.
+
+They're independent scripts with independent schedules — run them as often
+or as rarely as you like, together or separately (see "Schedule with cron"
+below).
 
 Both read the list of tracked users from an `accounts.xlsx` file kept in
 Dropbox (not hardcoded), and both upload their chart as a PNG to Dropbox and
@@ -79,6 +84,7 @@ export DROPBOX_APP_KEY=<your app key>
 export DROPBOX_APP_SECRET=<your app secret>
 export DROPBOX_REFRESH_TOKEN=<the refresh token from step 2>
 export DROPBOX_FOLDER=          # see below
+export FUGAKU_GID=<your project's real Fugaku group id, e.g. hp123456>
 ```
 
 `DROPBOX_FOLDER` controls where files are read from/written to:
@@ -88,6 +94,11 @@ export DROPBOX_FOLDER=          # see below
 - Set it to a real path (e.g. `/SharedFolderName`) for **Full Dropbox**
   access — this can be a folder someone else shared with you and gave you
   edit access to.
+
+`FUGAKU_GID` is the group id both scripts pass to `accountj`/`accountd`.
+Unlike `DROPBOX_FOLDER`, it's required — both scripts raise a `KeyError` on
+startup if it's unset, rather than silently defaulting to some other
+deployment's group.
 
 Never commit this file or its values — it's already covered by
 `.gitignore`-style hygiene; keep secrets out of source control.
@@ -112,19 +123,7 @@ at (the app folder root, or your chosen shared folder). It's re-downloaded
 fresh on every run, so you can add, remove, or move users any time without
 touching the scripts.
 
-### 5. Set the Fugaku group ID
-
-Each script hardcodes the real Fugaku group ID (`GID`) it queries via
-`accountj`/`accountd`, near the top of the file:
-
-```python
-GID = 'hp123456'
-```
-
-Edit this in both `node_hours.py` and `disk_usage.py` to your project's
-group ID.
-
-### 6. Run it
+### 5. Run it
 
 ```bash
 python3 node_hours.py
@@ -134,7 +133,7 @@ python3 disk_usage.py
 Each prints a per-user usage summary, saves a PNG next to the script, uploads
 it to Dropbox, then deletes the local copy.
 
-### 7. Schedule with cron
+### 6. Schedule with cron
 
 First find the absolute path to the `python3` that has the packages from
 step 1 installed (cron runs with a minimal `PATH`, so a bare `python3` in a
@@ -148,13 +147,14 @@ Then use that path in the crontab (`crontab -e`), substituting it for
 `/path/to/python3` below:
 
 ```cron
-0 6 * * * . $HOME/.config/fugaku_monitor.env && /path/to/python3 $HOME/scripts/node_hours.py >> $HOME/scripts/node_hours_cron.log 2>&1
-30 6 * * 1 . $HOME/.config/fugaku_monitor.env && /path/to/python3 $HOME/scripts/disk_usage.py >> $HOME/scripts/disk_usage_cron.log 2>&1
+0 6 * * 4 . $HOME/.config/fugaku_monitor.env && /path/to/python3 $HOME/scripts/node_hours.py >> $HOME/scripts/node_hours_cron.log 2>&1
+0 6 * * 4 . $HOME/.config/fugaku_monitor.env && /path/to/python3 $HOME/scripts/disk_usage.py >> $HOME/scripts/disk_usage_cron.log 2>&1
 ```
 
-Adjust the schedule (day/time) as needed; the example runs `node_hours.py`
-daily at 6:00 and `disk_usage.py` weekly on Mondays at 6:30 so they don't
-overlap.
+This example runs both scripts weekly, Thursdays (`4`) at 6:00 — pick
+whatever day/time suits you, and feel free to give them different schedules
+(e.g. `node_hours.py` daily, `disk_usage.py` weekly) instead. Running them at
+the same moment is fine — they don't share any state.
 
 ## Troubleshooting
 

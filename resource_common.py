@@ -6,13 +6,19 @@ import matplotlib
 matplotlib.use('Agg')
 matplotlib.rcParams['font.family'] = ['DejaVu Sans', 'Droid Sans Japanese']
 import matplotlib.pyplot as plt
+import matplotlib.colors
 plt.style.use('ggplot')
 import dropbox
 
-# code shared between node_hours.py (daily) and disk_usage.py (weekly) --
-# Dropbox access, accounts.csv loading, pie-chart colors/drawing. Import this
-# module before pyplot elsewhere in a script so the Agg backend/font/ggplot
-# style are set up first.
+# code shared between node_hours.py and disk_usage.py -- Dropbox access,
+# accounts.xlsx loading, pie-chart colors/drawing. Import this module before
+# pyplot elsewhere in a script so the Agg backend/font/ggplot style are set
+# up first.
+
+GID = os.environ['FUGAKU_GID']  # the only Fugaku group tracked so far;
+                  # accounts.xlsx's "group" column is a subgroup label, not
+                  # this id -- per-gid tracking from accounts.xlsx is a
+                  # future addition
 
 TOP_N = 5
 
@@ -35,8 +41,9 @@ def load_accounts(dbx, folder):
     # every run (no local copy is kept) so accounts can be added/removed
     # without touching either script. "group" is a subgroup label for
     # reporting (currently a placeholder "PIC" for everyone) -- it is NOT the
-    # Fugaku accountj/accountd group id, which each script hardcodes
-    # separately until per-gid tracking is reintroduced.
+    # Fugaku accountj/accountd group id, which comes from the FUGAKU_GID env
+    # var (see GID above) until per-gid tracking from this file is
+    # reintroduced.
     remote_path = folder+'/accounts.xlsx'
     _, res = dbx.files_download(remote_path)
 
@@ -69,7 +76,7 @@ def upload_to_dropbox(dbx, local_path, folder):
 
 def _assign_distinct_colors(keys, pool):
     # each key's preferred slot is a hash of the key (stable across runs and
-    # independent of accounts.csv's row order); if that slot is already taken
+    # independent of accounts.xlsx's row order); if that slot is already taken
     # by another key, linear-probe forward to the next free one so two
     # different keys are never handed the same color -- as long as there are
     # at most len(pool) keys. Keys are processed in sorted order so the
@@ -91,7 +98,7 @@ def _assign_distinct_colors(keys, pool):
 
 def build_color_map(uids, users, other_label='その他'):
     # a user's color is derived from a hash of their uid (see
-    # _assign_distinct_colors), not their position in accounts.csv, so it
+    # _assign_distinct_colors), not their position in accounts.xlsx, so it
     # stays the same across runs even as users are added/removed/reordered
     # in the file -- and two different tracked users are never handed the
     # same color. other_label (その他, or disk_usage.py's 未反映) is pulled
@@ -107,21 +114,33 @@ def build_color_map(uids, users, other_label='その他'):
 # per-group (bottom-row) pies use a deliberately different color scale from
 # per-user (top-row) pies -- a monochrome blue ramp rather than the ggplot
 # multi-hue cycle -- so a group's color is never mistaken for a user's, even
-# when both happen to be blueish. Steps are pulled from a validated
-# light->dark categorical ramp (see the dataviz skill's palette reference),
-# spread out for maximum mutual contrast rather than taken as consecutive
-# steps.
-_GROUP_COLORS = ['#b7d3f6', '#6da7ec', '#2a78d6', '#184f95', '#0d366b']
+# when both happen to be blueish.
 _GROUP_OTHER_COLOR = '#4a3aa7'  # violet accent -- distinct from the blue ramp
 
 
-def build_group_color_map(groups, other_label='その他'):
+def _group_color_pool(n):
+    # n evenly-spaced shades of blue, light to dark, from a validated
+    # sequential ramp (see the dataviz skill's palette reference). Generated
+    # at exactly n colors -- n is always len(groups), the number of distinct
+    # subgroups actually present in accounts.xlsx, never a hardcoded count --
+    # so every subgroup pie always has just enough distinct shades for
+    # however many subgroups accounts.xlsx currently defines, with none held
+    # back in reserve and none run short.
+    if n <= 0:
+        return []
+    if n == 1:
+        return ['#2a78d6']
+    cmap = plt.get_cmap('Blues')
+    return [matplotlib.colors.to_hex(cmap(0.25 + 0.65 * i / (n - 1))) for i in range(n)]
+
+
+def build_group_color_map(groups, other_label='未反映'):
     # same fixed-across-runs, collision-free hashing scheme as
     # build_color_map (see _assign_distinct_colors), keyed on the group label
-    # itself since groups (accounts.csv's "group" column) have no separate
+    # itself since groups (accounts.xlsx's "group" column) have no separate
     # uid; 未使用 stays the same gray as the per-user pies (it's a shared,
     # non-identity "nothing here" meaning, not a group identity).
-    assigned = _assign_distinct_colors(groups, _GROUP_COLORS)
+    assigned = _assign_distinct_colors(groups, _group_color_pool(len(groups)))
     color_map = dict(assigned)
     color_map[other_label] = _GROUP_OTHER_COLOR
     color_map['未使用'] = 'gray'
@@ -133,7 +152,7 @@ def top_n_or_other(pairs, other_value, n=TOP_N):
     # top n by value under their own name and folds the rest (plus
     # other_value, the already-computed rest-of-group total) into a single
     # total -- so a pie never shows more than n+2 slices (top n + その他 +
-    # 未使用) no matter how many users accounts.csv ends up tracking.
+    # 未使用) no matter how many users accounts.xlsx ends up tracking.
     pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
     top = pairs_sorted[:n]
     rest = pairs_sorted[n:]

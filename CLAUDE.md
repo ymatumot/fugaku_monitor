@@ -11,41 +11,47 @@ This directory contains four scripts:
   and drawing. Not run directly.
 - `node_hours.py`: tracks compute (node-hour) usage for a Fugaku group
   (`gid`) via the `accountj`/`pjstatj` Fujitsu accounting CLIs, and renders a
-  pie per fiscal-year period. Run **daily** — node-hour data is cheap to
-  query.
+  pie per fiscal-year period. Runs **weekly** (Thursdays).
 - `disk_usage.py`: tracks disk usage per volume for a Fugaku group via the
-  `accountd` accounting CLI, and renders a pie per volume. Run **weekly** —
-  `accountd` is slow, so it's queried far less often than node-hours.
+  `accountd` accounting CLI, and renders a pie per volume. Runs **weekly**
+  (Thursdays) — `accountd` is slow, so it was never run more often than this.
 - `get_dropbox_refresh_token.py`: a one-off interactive helper to (re-)obtain a
   Dropbox OAuth2 refresh token when either script's Dropbox upload starts
   failing with an auth error (see "Dropbox upload credentials" below).
 
 `node_hours.py` and `disk_usage.py` were originally one script
 (`used_resource.py`, producing one combined image) but were split so each
-workload could run on its own schedule — bundling them meant every daily cron
-run paid the slow `accountd` cost even on days a disk-usage refresh wasn't
-wanted.
+workload could run on its own schedule — bundling them meant every cron run
+paid the slow `accountd` cost even on a run where a disk-usage refresh wasn't
+wanted. They started out on different schedules (`node_hours.py` daily,
+`disk_usage.py` weekly) and were later unified onto the same weekly schedule
+(see the crontab below) — they remain separate scripts/images regardless of
+whether their schedules happen to match, since that split is about workload
+independence, not cadence.
 
 Each script renders a two-row grid of pie charts and uploads it as its own
 image: the top row breaks usage down by tracked user (top 5 by usage, by
-name), the bottom row breaks the same usage down by subgroup instead (the
-`group` column in `accounts.xlsx` — currently just the placeholder `PIC` for
-everyone, since no real subgrouping exists yet). Both rows share the same
-column layout and a "未使用" slice for the unused portion of the allocated
-quota (so the whole pie represents the quota, not just what's been used so
-far). Both also fold "the rest of the group/subgroup, plus any tracked
-users/subgroups past the top 5" into one catch-all slice, but the two scripts
-label it differently: `node_hours.py` calls it "その他" (its `accountj`-based
-numbers are current, so this slice genuinely means "other identities");
-`disk_usage.py` calls it "未反映" instead, because its per-user breakdown
-(`accountd -g <gid> -m -c`) lags its group totals (`accountd -g <gid> -c`) by
-weeks (see `disk_usage.py`'s notes below) — that gap is not reliably "other
-users," so its label says "not yet reflected" rather than implying specific
-other identities. `node_hours.py` produces one column per fiscal-year period
-(前期/後期/全期間), each titled with that period's usage vs. its allocated
-quota; `disk_usage.py` produces one column per disk volume the group has a
-quota on, titled with usage vs. quota in GiB. Capping at the top 5 keeps each
-chart readable as more users/subgroups get added to `accounts.xlsx` over time.
+name, plus a catch-all for the rest), the bottom row breaks the same usage
+down by subgroup instead (the `group` column in `accounts.xlsx` — currently
+just the placeholder `PIC` for everyone, since no real subgrouping exists
+yet; 6 real subgroups are planned). Both rows share the same column layout
+and a "未使用" slice for the unused portion of the allocated quota (so the
+whole pie represents the quota, not just what's been used so far).
+
+Both scripts' top rows call their catch-all slice "その他" (top 5 tracked
+users by usage, plus everyone else — capped so the chart stays readable as
+more users get added to `accounts.xlsx` over time). Their bottom rows differ:
+they show *every* subgroup by name, uncapped — with only a handful of
+subgroups ever expected to exist, there's no need for a top-N cutoff there —
+and label the leftover slice "未反映" rather than "その他", since once every
+known subgroup is already listed by name, the leftover can only be usage
+that isn't reflected under any of them yet (an untracked user for
+`node_hours.py`'s current `accountj`-based numbers; a stale per-user
+snapshot lag for `disk_usage.py` — see its notes below) rather than an actual
+other, nameable identity. `node_hours.py` produces one column per
+fiscal-year period (前期/後期/全期間), each titled with that period's usage
+vs. its allocated quota; `disk_usage.py` produces one column per disk volume
+the group has a quota on, titled with usage vs. quota in GiB.
 
 Each image is saved as `node_hours_<YYYYMMDD>.png` / `disk_usage_<YYYYMMDD>.png`
 next to the scripts, uploaded to the Dropbox app's own dedicated folder via
@@ -67,9 +73,9 @@ reading `accounts.xlsx`) and working `pjstatj`/`accountj` (`node_hours.py`) /
 `accountd` (`disk_usage.py`) on PATH (all present at `/usr/local/bin/` on
 this system).
 
-Intended to be run periodically via cron on two different schedules
-(scheduling itself is not handled by the scripts — see the crontab below):
-`node_hours.py` daily, `disk_usage.py` weekly.
+Intended to be run periodically via cron (scheduling itself is not handled by
+the scripts — see the crontab below); both currently run weekly, Thursdays at
+6:00.
 
 Japanese labels (前期/後期/全期間/その他/未使用) require a CJK-capable font;
 `resource_common.py` sets
@@ -98,11 +104,12 @@ each script's main loop to total each subgroup's usage for the bottom-row
 pies.
 
 Note `group` here is a subgroup *label* for the per-group breakdown pies, not
-the Fugaku `accountj`/`accountd` group id — that id is currently hardcoded as
-`GID = 'hp240019'` at the top of each script, since only one Fugaku group has
-ever been tracked. Reading it from `accounts.xlsx` instead (to support
-tracking multiple real Fugaku groups) is a planned future change, not
-implemented yet.
+the Fugaku `accountj`/`accountd` group id — that id comes from the
+`FUGAKU_GID` env var (`GID = os.environ['FUGAKU_GID']` in
+`resource_common.py`; both scripts do `GID = common.GID`), since only one
+Fugaku group has ever been tracked. Reading it from `accounts.xlsx` instead
+(to support tracking multiple real Fugaku groups) is a planned future
+change, not implemented yet.
 
 No local copy is kept — every run re-downloads `accounts.xlsx`, and
 `load_accounts()` lets `dbx.files_download` raise straight out of it (no
@@ -165,16 +172,20 @@ On this system the three variables live in `~/.config/fugaku_monitor.env`
 running each script:
 
 ```cron
-0 6 * * * . $HOME/.config/fugaku_monitor.env && /path/to/python3 $HOME/scripts/node_hours.py >> $HOME/scripts/node_hours_cron.log 2>&1
-30 6 * * 1 . $HOME/.config/fugaku_monitor.env && /path/to/python3 $HOME/scripts/disk_usage.py >> $HOME/scripts/disk_usage_cron.log 2>&1
+0 6 * * 4 . $HOME/.config/fugaku_monitor.env && /path/to/python3 $HOME/scripts/node_hours.py >> $HOME/scripts/node_hours_cron.log 2>&1
+0 6 * * 4 . $HOME/.config/fugaku_monitor.env && /path/to/python3 $HOME/scripts/disk_usage.py >> $HOME/scripts/disk_usage_cron.log 2>&1
 ```
 
 (`/path/to/python3` must be the absolute path to whichever `python3` has this
 project's dependencies installed — find it with `which python3`; cron runs
 with a minimal `PATH`, so a bare `python3` often resolves to the wrong
-interpreter or none at all. `disk_usage.py` runs Mondays at 6:30 — offset
-from `node_hours.py`'s 6:00 run so the two don't overlap; the day/time is
-arbitrary and easy to change. `cron` sets `$HOME` from the crontab owner's
+interpreter or none at all. Both scripts run Thursdays (`4`) at 6:00 — they
+used to run on different schedules (`node_hours.py` daily, `disk_usage.py`
+Mondays at 6:30, offset to avoid overlapping) but were later unified onto one
+weekly schedule; the day/time is arbitrary and easy to change, and running
+both at the same moment is fine since they don't share any state (each has
+its own image file, its own cron log, and neither touches the other's scratch
+files). `cron` sets `$HOME` from the crontab owner's
 passwd entry, and `$HOME/scripts` here resolves to the same directory as
 this repo's absolute path — `$HOME` is `/home/<uid>`, a symlink/bind mount to
 `/vol0006/mdt3/home/<uid>` on this system — so this line has no hardcoded
@@ -204,6 +215,13 @@ only needs doing once even though two scripts use it.
 
 ### `resource_common.py`
 
+- `GID = os.environ['FUGAKU_GID']` is the real Fugaku group id passed to
+  `accountj`/`pjstatj`/`accountd`, shared by both scripts (each does `GID =
+  common.GID`) so it only needs setting in one place — like the Dropbox
+  credentials, it's read from the environment (`FUGAKU_GID`) rather than
+  hardcoded, and raises a loud `KeyError` if unset rather than silently
+  defaulting to some other deployment's group. See "Accounts file"
+  above for why this is separate from `accounts.xlsx`'s `group` column.
 - `get_dropbox_client()` builds the `dropbox.Dropbox` client from the three
   env vars above.
 - `load_accounts(dbx, folder)` returns `uids, names, groups, uid_group` (see
@@ -218,38 +236,46 @@ only needs doing once even though two scripts use it.
   draw from two different color scales so a user's color and a group's color
   are never visually confusable, even when both happen to land on a similar
   hue: user colors come from the `ggplot` style's multi-hue cycle *minus its
-  last color* (`_USER_COLORS`); group colors come from `_GROUP_COLORS` — a
-  fixed 5-step monochrome blue ramp (light to dark) pulled from the dataviz
-  skill's validated palette reference, spread out (not consecutive steps) for
-  maximum mutual contrast. Both call the shared `_assign_distinct_colors(keys,
-  pool)`: each key's preferred slot is a hash of the key (stable across runs,
-  independent of accounts.xlsx's row order — keys are processed in `sorted()`
-  order so the outcome depends only on the *set* of keys present), but if that
-  slot is already taken by another key in the same call, it linear-probes
-  forward to the next free one — so two different tracked users (or two
-  different groups) are never handed the same color, as long as there are at
-  most `len(pool)` of them (a 5-6 item pool is comfortably ahead of today's 5
-  tracked users and 1 group, but a slot can get reused once that pool is
-  exhausted). Both functions take an `other_label` parameter (default
-  `'その他'`; `disk_usage.py` passes `'未反映'` instead — see the Overview)
-  for the catch-all slice's dict key, mapped to the reserved last `ggplot`
-  cycle color for users or a violet accent (`_GROUP_OTHER_COLOR`) for groups
-  — so it can never collide with that row's assigned colors; "未使用" is
-  hardcoded to the same gray in both rows (a shared, non-identity "nothing
-  here" meaning, not a specific user/group's color). A given user/group/slice
-  keeps the same color across every pie a script
-  draws, regardless of which slices happen to be present. `resource_common`
-  calls `plt.style.use('ggplot')` at import time before
-  `_cycle`/`_USER_COLORS`/`_OTHER_COLOR` are computed, so importing it in a
-  different order (or re-styling afterward) would silently change the
-  per-user palette these read from (`_GROUP_COLORS` is independent of the
-  `ggplot` style).
-- `top_n_or_other(pairs, other_value, n=TOP_N)` takes the tracked users'
-  `(name, value)` pairs for one pie, keeps the top `n` (`TOP_N = 5`) by value
-  under their own name, and folds the rest into a single total added to
-  `other_value` (the already-computed rest-of-group amount) — so a pie never
-  shows more than `TOP_N + 2` slices (top N users + その他 + 未使用) no
-  matter how many users `accounts.xlsx` ends up tracking.
+  last color* (`_USER_COLORS`, a fixed-size pool since the per-user row is
+  always capped at top 5 regardless of how many users exist); group colors
+  come from `_group_color_pool(len(groups))` — evenly-spaced shades of a
+  validated sequential blue ramp (see the dataviz skill's palette reference),
+  generated fresh at exactly `len(groups)` steps every run, `len(groups)`
+  being the actual number of distinct subgroups in `accounts.xlsx` (not a
+  hardcoded count) — because both scripts' per-subgroup rows show every
+  subgroup with no top-N cap (see the Overview), the pool must always have
+  exactly enough colors for however many subgroups currently exist, no more
+  and no fewer. Both color-map builders call the shared
+  `_assign_distinct_colors(keys, pool)`: each key's preferred slot is a hash
+  of the key (stable across runs, independent of accounts.xlsx's row order —
+  keys are processed in `sorted()` order so the outcome depends only on the
+  *set* of keys present), but if that slot is already taken by another key in
+  the same call, it linear-probes forward to the next free one — so two
+  different tracked users (or two different groups) are never handed the
+  same color, as long as there are at most `len(pool)` of them (guaranteed
+  for groups, since the pool is sized to match; a user slot can get reused
+  once the fixed user pool is exhausted). Both functions take an
+  `other_label` parameter — `build_color_map`'s defaults to `'その他'`;
+  `build_group_color_map`'s defaults to `'未反映'` (see the Overview) — for
+  the catch-all slice's dict key, mapped to the reserved last `ggplot` cycle
+  color for users or a violet accent (`_GROUP_OTHER_COLOR`) for groups so it
+  can never collide with that row's assigned colors; "未使用" is hardcoded to
+  the same gray in both rows (a shared, non-identity "nothing here" meaning,
+  not a specific user/group's color). A given user/group/slice keeps the
+  same color across every pie a script draws, regardless of which slices
+  happen to be present. `resource_common` calls `plt.style.use('ggplot')` at
+  import time before `_cycle`/`_USER_COLORS`/`_OTHER_COLOR` are computed, so
+  importing it in a different order (or re-styling afterward) would silently
+  change the per-user palette these read from (`_group_color_pool` is
+  independent of the `ggplot` style).
+- `top_n_or_other(pairs, other_value, n=TOP_N)` takes a pie's `(name, value)`
+  pairs, keeps the top `n` (`TOP_N = 5`) by value under their own name, and
+  folds the rest into a single total added to `other_value` (an
+  already-computed rest-of-group/subgroup amount) — so a pie never shows more
+  than `TOP_N + 2` slices. Used by both scripts' per-user (top) rows only —
+  both per-subgroup (bottom) rows show every subgroup directly instead (see
+  the Overview) since there are few enough of them that a cutoff isn't
+  needed.
 - `pie_or_placeholder(ax, values, pie_labels, title, color_map)` draws one pie
   chart: zero-value slices are dropped, wedge labels are shown via
   `ax.legend()` (rather than `ax.pie(labels=...)`) so that very small slices
@@ -261,8 +287,8 @@ only needs doing once even though two scripts use it.
 
 ### `node_hours.py`
 
-- `GID` (currently `'hp240019'`) is the hardcoded real Fugaku group id passed
-  to `accountj`/`pjstatj`; every tracked uid in `accounts.xlsx` is queried
+- `GID = common.GID` (see `resource_common.py` above) is passed to
+  `accountj`/`pjstatj`; every tracked uid in `accounts.xlsx` is queried
   under it regardless of that user's `group` (subgroup) value. The top-row
   pies break the result down per user (as before); the bottom-row pies total
   the same per-user numbers by `uid_group[uid]` instead, for the per-subgroup
@@ -279,10 +305,10 @@ only needs doing once even though two scripts use it.
   seconds) rather than hardcoding the quota. It reads the `SUBTHEMEPERIOD` rows
   (period `1` = zenki/前期, period `2` = kouki/後期), divides `LIMIT`/`USAGE` by
   3600 to get node-hours, and derives `zenkikan` as the sum of both. Note the
-  allocation cap lives on the parent *subtheme* (e.g. `hp240019`'s parent is
-  `hp260014`), not the group itself — `accountj`'s plain `GROUP` row typically
-  shows `unlimited`. A period is only given a reference line on the graph when
-  its allocation is `> 0`.
+  allocation cap lives on the tracked group's parent *subtheme*, not the group
+  itself — `accountj`'s plain `GROUP` row typically shows `unlimited`. A
+  period is only given a reference line on the graph when its allocation is
+  `> 0`.
 - `get_group_user_node_hours(gid)` runs `accountj -g <gid> -E -r 1 -c` *once*
   and reads its `USER` rows to get every group member's node-hour usage — this
   is a fiscal-year-to-date cumulative total (it has no period breakdown), but
@@ -309,9 +335,9 @@ only needs doing once even though two scripts use it.
 
 ### `disk_usage.py`
 
-- `GID` (currently `'hp240019'`) is the hardcoded real Fugaku group id, same
-  role as in `node_hours.py` — every tracked uid is queried under it
-  regardless of that user's `group` (subgroup) value, and the bottom-row
+- `GID = common.GID`, same role as in `node_hours.py` — every tracked uid is
+  queried under it regardless of that user's `group` (subgroup) value, and
+  the bottom-row
   pies total per-user disk usage by `uid_group[uid]`.
 - `get_group_disk_usage(gid)` runs `accountd -g <gid> -c` and reads its `GROUP`
   rows to get, per volume, the group's disk quota and total usage in GiB — only
@@ -322,12 +348,15 @@ only needs doing once even though two scripts use it.
   `COLLECT_DATE` is current on every run, but `-m -c`'s `COLLECT_DATE` is a
   much staler, infrequently-refreshed snapshot (observed several weeks behind
   in practice, and unchanged across repeated calls in the same session) — so
-  the per-user breakdown can lag the group total by weeks. This means a
-  volume's "その他" slice is *not* necessarily usage by untracked group
-  members — it can equally be recent usage by a tracked user that the stale
-  per-user snapshot hasn't caught up to yet (e.g. a user who started using a
-  volume, or grew their usage on one, after that snapshot was taken). There
-  is no way to tell the two apart from `accountd`'s output alone.
+  the per-user breakdown can lag the group total by weeks. The per-user
+  (top-row) "その他" slice conflates two things that can't be told apart from
+  `accountd`'s output alone: genuinely untracked users, and a tracked user's
+  recent usage the stale snapshot hasn't caught up to yet. The per-subgroup
+  (bottom-row) pie doesn't have that ambiguity — since it shows every
+  subgroup by name (labeling the leftover "未反映", `build_group_color_map`'s
+  default), its leftover slice can only be the latter (unreflected lag),
+  never an untracked identity, because every tracked user's `group` is
+  already accounted for by one of the named subgroup slices.
 - If a group has no volumes with a quota, the figure is a single axes showing
   "対象ボリュームなし" instead of a two-row grid of pies.
 
@@ -338,10 +367,10 @@ only needs doing once even though two scripts use it.
   (`uid,name,group`) followed by one `uid,name,group` row per tracked user;
   `group` is a subgroup label (currently `PIC` for everyone), not the real
   Fugaku group id.
-- To track a different (or additional) real Fugaku group, change/add the
-  hardcoded `GID` constant near the top of `node_hours.py`/`disk_usage.py` —
-  this is not read from `accounts.xlsx`. Supporting multiple real Fugaku
-  groups from `accounts.xlsx` itself is a planned future change, not
+- To track a different (or additional) real Fugaku group, change the
+  `FUGAKU_GID` env var — this is not read from `accounts.xlsx`. Supporting
+  multiple real Fugaku groups from `accounts.xlsx` itself is a planned
+  future change, not
   implemented yet.
 - Allocation quotas are fetched live via `accountj`, not hardcoded — no manual
   update needed when a new fiscal year's allocation is granted.
