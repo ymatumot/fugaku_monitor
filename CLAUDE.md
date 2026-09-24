@@ -32,11 +32,10 @@ independence, not cadence.
 Each script renders a two-row grid of pie charts and uploads it as its own
 image: the top row breaks usage down by tracked user (top 5 by usage, by
 name, plus a catch-all for the rest), the bottom row breaks the same usage
-down by subgroup instead (the `group` column in `accounts.xlsx` — currently
-just the placeholder `PIC` for everyone, since no real subgrouping exists
-yet; 6 real subgroups are planned). Both rows share the same column layout
-and a "未使用" slice for the unused portion of the allocated quota (so the
-whole pie represents the quota, not just what's been used so far).
+down by subgroup instead (the `group` column in `accounts.xlsx`). Both rows
+share the same column layout and a "未使用" slice for the unused portion of
+the allocated quota (so the whole pie represents the quota, not just what's
+been used so far).
 
 Both scripts' top rows call their catch-all slice "その他" (top 5 tracked
 users by usage, plus everyone else — capped so the chart stays readable as
@@ -106,10 +105,10 @@ pies.
 Note `group` here is a subgroup *label* for the per-group breakdown pies, not
 the Fugaku `accountj`/`accountd` group id — that id comes from the
 `FUGAKU_GID` env var (`GID = os.environ['FUGAKU_GID']` in
-`resource_common.py`; both scripts do `GID = common.GID`), since only one
-Fugaku group has ever been tracked. Reading it from `accounts.xlsx` instead
-(to support tracking multiple real Fugaku groups) is a planned future
-change, not implemented yet.
+`resource_common.py`; both scripts do `GID = common.GID`). Only one real
+Fugaku group can be tracked at a time this way; reading it from
+`accounts.xlsx` instead (to support tracking multiple real Fugaku groups in
+one run) would be a future change, not implemented.
 
 No local copy is kept — every run re-downloads `accounts.xlsx`, and
 `load_accounts()` lets `dbx.files_download` raise straight out of it (no
@@ -226,9 +225,8 @@ only needs doing once even though two scripts use it.
   env vars above.
 - `load_accounts(dbx, folder)` returns `uids, names, groups, uid_group` (see
   "Accounts file" above); `groups` is the deduplicated, first-seen-order list
-  of every `group` value present in `accounts.xlsx` (currently just `PIC`).
-  Each script does `users = dict(zip(uids, names))` itself to map uid to
-  display name.
+  of every `group` value present in `accounts.xlsx`. Each script does `users
+  = dict(zip(uids, names))` itself to map uid to display name.
 - `upload_to_dropbox(dbx, local_path, folder)` uploads with
   `mode=dropbox.files.WriteMode.overwrite`.
 - `build_color_map(uids, users)` (top-row, per-user pies) and
@@ -365,13 +363,11 @@ only needs doing once even though two scripts use it.
 - To add/remove tracked users or subgroups, edit `accounts.xlsx` in the
   Dropbox app folder directly — no script change needed. It has a header row
   (`uid,name,group`) followed by one `uid,name,group` row per tracked user;
-  `group` is a subgroup label (currently `PIC` for everyone), not the real
-  Fugaku group id.
+  `group` is a subgroup label, not the real Fugaku group id.
 - To track a different (or additional) real Fugaku group, change the
   `FUGAKU_GID` env var — this is not read from `accounts.xlsx`. Supporting
-  multiple real Fugaku groups from `accounts.xlsx` itself is a planned
-  future change, not
-  implemented yet.
+  multiple real Fugaku groups from `accounts.xlsx` itself would be a future
+  change, not implemented.
 - Allocation quotas are fetched live via `accountj`, not hardcoded — no manual
   update needed when a new fiscal year's allocation is granted.
 - `labels` (in `node_hours.py`) selects which `pjstatj -c` CSV columns are
