@@ -125,7 +125,11 @@ touching the scripts.
 
 ### 5. Run it
 
+Load the env file from step 3 into your shell first (this is only needed for
+manual runs — the crontab in step 6 sources it itself):
+
 ```bash
+. ~/.config/fugaku_monitor.env
 python3 node_hours.py
 python3 disk_usage.py
 ```
