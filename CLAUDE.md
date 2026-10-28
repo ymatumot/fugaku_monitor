@@ -232,40 +232,36 @@ only needs doing once even though two scripts use it.
 - `build_color_map(uids, users)` (top-row, per-user pies) and
   `build_group_color_map(groups)` (bottom-row, per-group pies) deliberately
   draw from two different color scales so a user's color and a group's color
-  are never visually confusable, even when both happen to land on a similar
-  hue: user colors come from the `ggplot` style's multi-hue cycle *minus its
-  last color* (`_USER_COLORS`, a fixed-size pool since the per-user row is
-  always capped at top 5 regardless of how many users exist); group colors
-  come from `_group_color_pool(len(groups))` — evenly-spaced shades of a
-  validated sequential blue ramp (see the dataviz skill's palette reference),
-  generated fresh at exactly `len(groups)` steps every run, `len(groups)`
-  being the actual number of distinct subgroups in `accounts.xlsx` (not a
-  hardcoded count) — because both scripts' per-subgroup rows show every
-  subgroup with no top-N cap (see the Overview), the pool must always have
-  exactly enough colors for however many subgroups currently exist, no more
-  and no fewer. Both color-map builders call the shared
-  `_assign_distinct_colors(keys, pool)`: each key's preferred slot is a hash
-  of the key (stable across runs, independent of accounts.xlsx's row order —
-  keys are processed in `sorted()` order so the outcome depends only on the
-  *set* of keys present), but if that slot is already taken by another key in
-  the same call, it linear-probes forward to the next free one — so two
-  different tracked users (or two different groups) are never handed the
-  same color, as long as there are at most `len(pool)` of them (guaranteed
-  for groups, since the pool is sized to match; a user slot can get reused
-  once the fixed user pool is exhausted). Both functions take an
-  `other_label` parameter — `build_color_map`'s defaults to `'その他'`;
-  `build_group_color_map`'s defaults to `'未反映'` (see the Overview) — for
-  the catch-all slice's dict key, mapped to the reserved last `ggplot` cycle
-  color for users or a violet accent (`_GROUP_OTHER_COLOR`) for groups so it
-  can never collide with that row's assigned colors; "未使用" is hardcoded to
-  the same gray in both rows (a shared, non-identity "nothing here" meaning,
-  not a specific user/group's color). A given user/group/slice keeps the
-  same color across every pie a script draws, regardless of which slices
-  happen to be present. `resource_common` calls `plt.style.use('ggplot')` at
-  import time before `_cycle`/`_USER_COLORS`/`_OTHER_COLOR` are computed, so
-  importing it in a different order (or re-styling afterward) would silently
-  change the per-user palette these read from (`_group_color_pool` is
-  independent of the `ggplot` style).
+  are never visually confusable: user colors come from `_USER_COLORS` —
+  matplotlib's `tab20` (10 hues × dark/light) minus its gray pair, 18 colors,
+  so no user can be confused with 未使用's gray; group colors come from
+  `_group_color_pool(len(groups))` — evenly-spaced shades of a validated
+  sequential blue ramp (see the dataviz skill's palette reference), generated
+  at exactly `len(groups)` steps every run, so every subgroup (all shown,
+  no top-N cap — see the Overview) always gets its own shade.
+- The two builders assign colors differently, on purpose. A **user's** color
+  is purely `_USER_COLORS[_hash_index(uid, 18, _USER_COLOR_SALT)]` (md5 of a
+  fixed salt + the uid), with no probing against other users — so a user's
+  color never changes as people are added to, removed from, or reordered in
+  `accounts.xlsx` (a requirement: each user keeps one fixed color
+  permanently). The accepted trade-off: with far more tracked users than
+  colors, several users share each color, and two users sharing one can
+  occasionally land in the same pie (the legend still names them).
+  `_USER_COLOR_SALT` was chosen once by brute-force search so the users
+  present at the time spread evenly; never change it, since that repaints
+  every user. Do not "fix" this with collision probing or per-image
+  reassignment — both make a user's color depend on who else is present, which
+  breaks the fixed-color requirement. **Groups** instead use
+  `_assign_distinct_colors(keys, pool)`: hash-preferred slot plus linear
+  probing (keys in `sorted()` order), which with a pool sized to
+  `len(groups)` guarantees no two groups share a color.
+- Both builders take an `other_label` parameter — `build_color_map`'s
+  defaults to `'その他'`; `build_group_color_map`'s to `'未反映'` (see the
+  Overview) — mapped to a color outside that row's pool (`_OTHER_COLOR`, a
+  light gray, for users; a violet accent, `_GROUP_OTHER_COLOR`, for groups);
+  "未使用" is hardcoded to the same mid gray in both rows (a shared,
+  non-identity "nothing here" meaning). A given user/group/slice keeps the
+  same color across every pie a script draws.
 - `top_n_or_other(pairs, other_value, n=TOP_N)` takes a pie's `(name, value)`
   pairs, keeps the top `n` (`TOP_N = 5`) by value under their own name, and
   folds the rest into a single total added to `other_value` (an

@@ -22,9 +22,19 @@ GID = os.environ['FUGAKU_GID']  # the only Fugaku group tracked so far;
 
 TOP_N = 5
 
-_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
-_OTHER_COLOR = _cycle[-1]
-_USER_COLORS = _cycle[:-1]
+# per-user (top-row) colors: matplotlib's tab20 (10 hues x dark/light)
+# minus its gray pair, so no user is confusable with 未使用's gray -- 18
+# colors for a user list far longer than that, so users necessarily share
+# colors (see build_color_map). その他 gets a light
+# gray outside this pool.
+_USER_COLORS = [matplotlib.colors.to_hex(c) for i, c in
+                enumerate(plt.get_cmap('tab20').colors) if i not in (14, 15)]
+_OTHER_COLOR = '#d4d4d4'
+# prefixed to each uid before hashing; picked once (by brute-force search) so
+# the users in accounts.xlsx at the time spread as evenly as possible over
+# _USER_COLORS. Changing it repaints every user, so
+# leave it fixed -- users added later just land wherever their hash puts them.
+_USER_COLOR_SALT = '113531:'
 
 
 def get_dropbox_client():
@@ -74,6 +84,10 @@ def upload_to_dropbox(dbx, local_path, folder):
     print('uploaded to Dropbox: '+dest_path)
 
 
+def _hash_index(key, n, salt=''):
+    return int(hashlib.md5((salt+key).encode()).hexdigest(), 16) % n
+
+
 def _assign_distinct_colors(keys, pool):
     # each key's preferred slot is a hash of the key (stable across runs and
     # independent of accounts.xlsx's row order); if that slot is already taken
@@ -86,7 +100,7 @@ def _assign_distinct_colors(keys, pool):
     assigned = {}
     taken = set()
     for key in sorted(keys):
-        idx = int(hashlib.md5(key.encode()).hexdigest(), 16) % len(pool)
+        idx = _hash_index(key, len(pool))
         for _ in range(len(pool)):
             if pool[idx] not in taken:
                 break
@@ -97,14 +111,13 @@ def _assign_distinct_colors(keys, pool):
 
 
 def build_color_map(uids, users, other_label='その他'):
-    # a user's color is derived from a hash of their uid (see
-    # _assign_distinct_colors), not their position in accounts.xlsx, so it
-    # stays the same across runs even as users are added/removed/reordered
-    # in the file -- and two different tracked users are never handed the
-    # same color. other_label (その他, or disk_usage.py's 未反映) is pulled
-    # out of the per-user pool (reserved cycle color) so it can never collide
-    # with a user's color; 未使用 is always gray.
-    assigned = _assign_distinct_colors(uids, _USER_COLORS)
+    # a user's color is purely a hash of their uid -- no probing against
+    # other users -- so it never changes as users are added/removed/
+    # reordered in accounts.xlsx. The flip side: with far more users than
+    # colors, two users can share one, occasionally even within one pie (the
+    # legend still tells them apart). other_label (その他) and 未使用 get
+    # colors outside the per-user pool so they never collide with a user.
+    assigned = {uid: _USER_COLORS[_hash_index(uid, len(_USER_COLORS), _USER_COLOR_SALT)] for uid in uids}
     color_map = {users[uid]: assigned[uid] for uid in uids}
     color_map[other_label] = _OTHER_COLOR
     color_map['未使用'] = 'gray'
@@ -112,8 +125,8 @@ def build_color_map(uids, users, other_label='その他'):
 
 
 # per-group (bottom-row) pies use a deliberately different color scale from
-# per-user (top-row) pies -- a monochrome blue ramp rather than the ggplot
-# multi-hue cycle -- so a group's color is never mistaken for a user's, even
+# per-user (top-row) pies -- a monochrome blue ramp rather than tab20's
+# multi-hue palette -- so a group's color is never mistaken for a user's, even
 # when both happen to be blueish.
 _GROUP_OTHER_COLOR = '#4a3aa7'  # violet accent -- distinct from the blue ramp
 
@@ -135,8 +148,9 @@ def _group_color_pool(n):
 
 
 def build_group_color_map(groups, other_label='未反映'):
-    # same fixed-across-runs, collision-free hashing scheme as
-    # build_color_map (see _assign_distinct_colors), keyed on the group label
+    # fixed-across-runs, collision-free hashing (see
+    # _assign_distinct_colors) -- unlike build_color_map, the pool is sized
+    # to len(groups), so no two groups ever share a color -- keyed on the group label
     # itself since groups (accounts.xlsx's "group" column) have no separate
     # uid; 未使用 stays the same gray as the per-user pies (it's a shared,
     # non-identity "nothing here" meaning, not a group identity).
